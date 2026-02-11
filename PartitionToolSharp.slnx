@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/PartitionToolSharp.Tests/PartitionToolSharp.Tests.csproj" />
+  </Folder>
   <Project Path="LibLpSharp/LibLpSharp.csproj" />
   <Project Path="LibSpraseSharp/LibSpraseSharp.csproj" />
   <Project Path="LpDump/LpDump.csproj" />

@@ -1,4 +1,3 @@
-
 using System.Buffers.Binary;
 
 namespace LibSparseSharp;
@@ -41,6 +40,7 @@ public class SparseStream(SparseFile sparseFile) : Stream
 
         var toRead = (int)Math.Min(count, _length - _position);
         var totalRead = 0;
+        Span<byte> fillValue = stackalloc byte[4];
 
         while (totalRead < toRead)
         {
@@ -73,7 +73,6 @@ public class SparseStream(SparseFile sparseFile) : Stream
                     }
                     break;
                 case SparseFormat.CHUNK_TYPE_FILL:
-                    Span<byte> fillValue = stackalloc byte[4];
                     BinaryPrimitives.WriteUInt32LittleEndian(fillValue, chunk.FillValue);
                     for (var i = 0; i < currentReadSize; i++)
                     {
