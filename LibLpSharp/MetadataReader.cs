@@ -1,0 +1,215 @@
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+
+namespace LibLpSharp;
+
+public static class MetadataReader
+{
+    public static LpMetadata ReadFromImageFile(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return ReadFromImageStream(stream);
+    }
+
+    public static LpMetadata ReadFromImageStream(Stream stream)
+    {
+        var buffer = new byte[MetadataFormat.LP_METADATA_GEOMETRY_SIZE];
+        stream.Seek(MetadataFormat.LP_PARTITION_RESERVED_BYTES, SeekOrigin.Begin);
+        if (stream.Read(buffer, 0, buffer.Length) != buffer.Length)
+        {
+            throw new InvalidDataException("无法读取逻辑分区几何数据 (Geometry)");
+        }
+
+        ParseGeometry(buffer, out var geometry);
+        return ParseMetadata(geometry, stream);
+    }
+
+    public static unsafe void ParseGeometry(ReadOnlySpan<byte> buffer, out LpMetadataGeometry geometry)
+    {
+        geometry = default;
+        if (buffer.Length < sizeof(LpMetadataGeometry))
+        {
+            throw new ArgumentException("数据长度不足以解析 LpMetadataGeometry");
+        }
+
+        geometry = LpMetadataGeometry.FromBytes(buffer);
+
+        if (geometry.Magic != MetadataFormat.LP_METADATA_GEOMETRY_MAGIC)
+        {
+            throw new InvalidDataException("无效的 LpMetadataGeometry 魔数");
+        }
+
+        if (geometry.StructSize > sizeof(LpMetadataGeometry))
+        {
+            throw new InvalidDataException("LpMetadataGeometry 结构大小错误");
+        }
+
+        // 验证校验和
+        var originalChecksum = new byte[32];
+        fixed (byte* p = geometry.Checksum)
+        {
+            Marshal.Copy((IntPtr)p, originalChecksum, 0, 32);
+        }
+
+        // 计算校验和之前先清零
+        var tempBuffer = buffer[..(int)geometry.StructSize].ToArray();
+        // 校验和位于偏移 8 处，长度为 32
+        for (var i = 0; i < 32; i++)
+        {
+            tempBuffer[8 + i] = 0;
+        }
+
+        using var sha256 = SHA256.Create();
+        var computed = sha256.ComputeHash(tempBuffer);
+        for (var i = 0; i < 32; i++)
+        {
+            if (computed[i] != originalChecksum[i])
+            {
+                throw new InvalidDataException("LpMetadataGeometry 校验和不匹配");
+            }
+        }
+    }
+
+    public static unsafe LpMetadata ParseMetadata(LpMetadataGeometry geometry, Stream stream)
+    {
+        // 元数据位于主备份几何块之后
+        stream.Seek(MetadataFormat.LP_PARTITION_RESERVED_BYTES + (MetadataFormat.LP_METADATA_GEOMETRY_SIZE * 2), SeekOrigin.Begin);
+
+        var headerBuffer = new byte[sizeof(LpMetadataHeader)];
+        if (stream.Read(headerBuffer, 0, headerBuffer.Length) != headerBuffer.Length)
+        {
+            throw new InvalidDataException("无法读取 LpMetadataHeader");
+        }
+
+        var header = LpMetadataHeader.FromBytes(headerBuffer);
+        if (header.Magic != MetadataFormat.LP_METADATA_HEADER_MAGIC)
+        {
+            throw new InvalidDataException("无效的 LpMetadataHeader 魔数");
+        }
+
+        // 验证头部校验和
+        var originalHeaderChecksum = new byte[32];
+        for (var i = 0; i < 32; i++)
+        {
+            originalHeaderChecksum[i] = header.HeaderChecksum[i];
+        }
+
+        var headerCopy = (byte[])headerBuffer.Clone();
+        // 校验和所在偏移为 12，将其清零
+        for (var i = 0; i < 32; i++)
+        {
+            headerCopy[12 + i] = 0;
+        }
+
+        using var sha256 = SHA256.Create();
+        var computedHeader = sha256.ComputeHash(headerCopy, 0, (int)header.HeaderSize);
+        for (var i = 0; i < 32; i++)
+        {
+            if (computedHeader[i] != originalHeaderChecksum[i])
+            {
+                throw new InvalidDataException("LpMetadataHeader 校验和不匹配");
+            }
+        }
+
+        // 读取数据表
+        var tablesBuffer = new byte[header.TablesSize];
+        if (stream.Read(tablesBuffer, 0, tablesBuffer.Length) != tablesBuffer.Length)
+        {
+            throw new InvalidDataException("无法读取元数据表 (Metadata Tables)");
+        }
+
+        // 验证表数据的校验和
+        var originalTablesChecksum = new byte[32];
+        for (var i = 0; i < 32; i++)
+        {
+            originalTablesChecksum[i] = header.TablesChecksum[i];
+        }
+
+        var computedTables = sha256.ComputeHash(tablesBuffer);
+        for (var i = 0; i < 32; i++)
+        {
+            if (computedTables[i] != originalTablesChecksum[i])
+            {
+                throw new InvalidDataException("元数据表校验和不匹配");
+            }
+        }
+
+        var metadata = new LpMetadata
+        {
+            Geometry = geometry,
+            Header = header
+        };
+
+        ParseTable(tablesBuffer, header.Partitions, metadata.Partitions);
+        ParseTable(tablesBuffer, header.Extents, metadata.Extents);
+        ParseTable(tablesBuffer, header.Groups, metadata.Groups);
+        ParseTable(tablesBuffer, header.BlockDevices, metadata.BlockDevices);
+
+        return metadata;
+    }
+
+    public static LpMetadata ReadMetadata(Stream stream, uint slotNumber)
+    {
+        ReadLogicalPartitionGeometry(stream, out var geometry);
+        return ReadPrimaryMetadata(stream, geometry, slotNumber);
+    }
+
+    public static void ReadLogicalPartitionGeometry(Stream stream, out LpMetadataGeometry geometry)
+    {
+        try
+        {
+            ReadPrimaryGeometry(stream, out geometry);
+        }
+        catch
+        {
+            ReadBackupGeometry(stream, out geometry);
+        }
+    }
+
+    public static void ReadPrimaryGeometry(Stream stream, out LpMetadataGeometry geometry) => ReadGeometry(stream, MetadataFormat.LP_PARTITION_RESERVED_BYTES, out geometry);
+
+    public static void ReadBackupGeometry(Stream stream, out LpMetadataGeometry geometry) => ReadGeometry(stream, MetadataFormat.LP_PARTITION_RESERVED_BYTES + MetadataFormat.LP_METADATA_GEOMETRY_SIZE, out geometry);
+
+    private static void ReadGeometry(Stream stream, long offset, out LpMetadataGeometry geometry)
+    {
+        var buffer = new byte[MetadataFormat.LP_METADATA_GEOMETRY_SIZE];
+        stream.Seek(offset, SeekOrigin.Begin);
+        if (stream.Read(buffer, 0, buffer.Length) != buffer.Length)
+        {
+            throw new InvalidDataException($"无法在偏移 0x{offset:X} 处读取几何数据");
+        }
+        ParseGeometry(buffer, out geometry);
+    }
+
+    public static LpMetadata ReadPrimaryMetadata(Stream stream, LpMetadataGeometry geometry, uint slotNumber)
+    {
+        var offset = GetPrimaryMetadataOffset(geometry, slotNumber);
+        stream.Seek(offset, SeekOrigin.Begin);
+        return ParseMetadata(geometry, stream);
+    }
+
+    public static long GetPrimaryMetadataOffset(LpMetadataGeometry geometry, uint slotNumber) => MetadataFormat.LP_PARTITION_RESERVED_BYTES + (MetadataFormat.LP_METADATA_GEOMETRY_SIZE * 2) + ((long)slotNumber * geometry.MetadataMaxSize);
+
+    public static long GetBackupMetadataOffset(LpMetadataGeometry geometry, uint slotNumber)
+    {
+        var start = MetadataFormat.LP_PARTITION_RESERVED_BYTES + (MetadataFormat.LP_METADATA_GEOMETRY_SIZE * 2) + ((long)geometry.MetadataMaxSize * geometry.MetadataSlotCount);
+        return start + ((long)slotNumber * geometry.MetadataMaxSize);
+    }
+
+    private static unsafe void ParseTable<T>(byte[] buffer, LpMetadataTableDescriptor desc, List<T> list) where T : unmanaged
+    {
+        if (desc.NumEntries == 0)
+        {
+            return;
+        }
+
+        for (uint i = 0; i < desc.NumEntries; i++)
+        {
+            var offset = (int)(desc.Offset + (i * desc.EntrySize));
+            fixed (byte* p = &buffer[offset])
+            {
+                list.Add(*(T*)p);
+            }
+        }
+    }
+}
