@@ -62,7 +62,7 @@ public partial class PartitionEntry : ObservableObject
         {
             if (FileSystemType == "Unknown") return "Unformatted";
             if (FileSystemType == "Raw") return "No FS Header";
-            
+
             if (FileSystemSize > 0)
             {
                 return $"({FileSystemSize / (1024 * 1024.0):F2} MiB)";
