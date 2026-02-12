@@ -115,6 +115,30 @@ public class MetadataBuilder
         _partitions.Add(new Partition(name, groupName, attributes));
     }
 
+    public void RemovePartition(string name)
+    {
+        var partition = FindPartition(name);
+        if (partition != null)
+        {
+            _partitions.Remove(partition);
+        }
+    }
+
+    public void ReorderPartitions(IEnumerable<string> orderedNames)
+    {
+        var newOrder = new List<Partition>();
+        foreach (var name in orderedNames)
+        {
+            var p = _partitions.Find(x => x.Name == name);
+            if (p != null)
+            {
+                newOrder.Add(p);
+            }
+        }
+        _partitions.Clear();
+        _partitions.AddRange(newOrder);
+    }
+
     public void AddGroup(string name, ulong maxSize)
     {
         if (_groups.Any(g => g.Name == name))

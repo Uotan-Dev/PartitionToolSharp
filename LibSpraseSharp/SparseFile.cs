@@ -159,7 +159,11 @@ public class SparseFile : IDisposable
 
         for (uint i = 0; i < sparseFile.Header.TotalChunks; i++)
         {
-            if (i % 500 == 0 && i > 0) SparseLogger.Info($"正在加载第 {i}/{sparseFile.Header.TotalChunks} 个 Chunk...");
+            if (i % 500 == 0 && i > 0)
+            {
+                SparseLogger.Info($"正在加载第 {i}/{sparseFile.Header.TotalChunks} 个 Chunk...");
+            }
+
             var chunkHeaderData = new byte[SparseFormat.CHUNK_HEADER_SIZE];
             if (stream.Read(chunkHeaderData, 0, chunkHeaderData.Length) != chunkHeaderData.Length)
             {

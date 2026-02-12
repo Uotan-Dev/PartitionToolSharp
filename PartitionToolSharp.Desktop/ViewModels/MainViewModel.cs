@@ -1,9 +1,12 @@
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
+using PartitionToolSharp.Desktop.Models;
 
 namespace PartitionToolSharp.Desktop.ViewModels;
 
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IRecipient<OpenImageRequestMessage>
 {
     [ObservableProperty]
     private object? _currentView;
@@ -16,7 +19,10 @@ public partial class MainViewModel : ObservableObject
     public MainViewModel()
     {
         CurrentView = _dashboardVM;
+        WeakReferenceMessenger.Default.Register(this);
     }
+
+    public async void Receive(OpenImageRequestMessage message) => await OpenImageGlobalAsync();
 
     [RelayCommand]
     private void Navigate(string target)
@@ -30,8 +36,11 @@ public partial class MainViewModel : ObservableObject
             _ => CurrentView
         };
     }
-}
 
-public class DashboardViewModel : ObservableObject { }
-public class FlasherViewModel : ObservableObject { }
-public class SettingsViewModel : ObservableObject { }
+    [RelayCommand]
+    private async Task OpenImageGlobalAsync()
+    {
+        Navigate("PartitionManager");
+        await _partitionManagerVM.OpenFileAsync();
+    }
+}

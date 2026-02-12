@@ -20,25 +20,41 @@
         <TextBlock Text="PartitionToolSharp" VerticalAlignment="Center" Margin="8,0"/>
     </u:UrsaWindow.TitleBarContent>
 
-    <Grid ColumnDefinitions="Auto, *">
+    <Grid ColumnDefinitions="Auto, *" Margin="0,32,0,0">
         <!-- Sidebar -->
-        <Border Grid.Column="0" Width="220" Padding="10" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="0,0,1,0">
-            <StackPanel Spacing="5">
-                <TextBlock Text="PartitionToolSharp" FontSize="18" FontWeight="Bold" Margin="10,20"/>
+        <Border Grid.Column="0" Width="220" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="0,0,1,0">
+            <StackPanel Spacing="5" Margin="0,20">
+                <TextBlock Text="PartitionToolSharp" FontSize="18" FontWeight="Bold" Margin="20,0,20,20"/>
                 
-                <u:NavMenu ExpandWidth="220">
+                <u:NavMenu HorizontalAlignment="Stretch">
                     <u:NavMenuItem Header="Dashboard" 
                                    Command="{Binding NavigateCommand}" 
-                                   CommandParameter="Dashboard"/>
+                                   CommandParameter="Dashboard">
+                        <u:NavMenuItem.Icon>
+                            <PathIcon Data="{DynamicResource SemiIconDashboard}" />
+                        </u:NavMenuItem.Icon>
+                    </u:NavMenuItem>
                     <u:NavMenuItem Header="Partition Manager" 
                                    Command="{Binding NavigateCommand}" 
-                                   CommandParameter="PartitionManager"/>
+                                   CommandParameter="PartitionManager">
+                        <u:NavMenuItem.Icon>
+                            <PathIcon Data="{DynamicResource SemiIconEdit}" />
+                        </u:NavMenuItem.Icon>
+                    </u:NavMenuItem>
                     <u:NavMenuItem Header="Flasher &amp; Images" 
                                    Command="{Binding NavigateCommand}" 
-                                   CommandParameter="Flasher"/>
+                                   CommandParameter="Flasher">
+                        <u:NavMenuItem.Icon>
+                            <PathIcon Data="{DynamicResource SemiIconHardDrive}" />
+                        </u:NavMenuItem.Icon>
+                    </u:NavMenuItem>
                     <u:NavMenuItem Header="Settings" 
                                    Command="{Binding NavigateCommand}" 
-                                   CommandParameter="Settings"/>
+                                   CommandParameter="Settings">
+                        <u:NavMenuItem.Icon>
+                            <PathIcon Data="{DynamicResource SemiIconSetting}" />
+                        </u:NavMenuItem.Icon>
+                    </u:NavMenuItem>
                 </u:NavMenu>
             </StackPanel>
         </Border>
@@ -48,12 +64,16 @@
             <ContentControl Grid.Row="1" Content="{Binding CurrentView}">
                 <ContentControl.DataTemplates>
                     <DataTemplate DataType="vm:DashboardViewModel">
-                        <Border Padding="20">
-                            <TextBlock Text="Home Dashboard - Image Overview" FontSize="20"/>
-                        </Border>
+                        <views:DashboardView/>
                     </DataTemplate>
                     <DataTemplate DataType="vm:PartitionManagerViewModel">
                         <views:PartitionManagerView/>
+                    </DataTemplate>
+                    <DataTemplate DataType="vm:FlasherViewModel">
+                        <views:FlasherView/>
+                    </DataTemplate>
+                    <DataTemplate DataType="vm:SettingsViewModel">
+                        <views:SettingsView/>
                     </DataTemplate>
                 </ContentControl.DataTemplates>
             </ContentControl>

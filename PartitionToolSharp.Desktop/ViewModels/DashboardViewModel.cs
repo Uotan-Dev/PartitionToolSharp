@@ -1,0 +1,103 @@
+using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
+using LibLpSharp;
+using PartitionToolSharp.Desktop.Models;
+
+namespace PartitionToolSharp.Desktop.ViewModels;
+
+public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataChangedMessage>
+{
+    [ObservableProperty]
+    private string _deviceSize = "0 GB";
+
+    [ObservableProperty]
+    private string _slotCount = "0";
+
+    [ObservableProperty]
+    private string _metadataSize = "0 KB";
+
+    [ObservableProperty]
+    private double _usagePercentage;
+
+    [ObservableProperty]
+    private string _usageText = "0% Used";
+
+    [ObservableProperty]
+    private string? _currentPath;
+
+    public ObservableCollection<string> RecentFiles { get; } = [];
+
+    public ObservableCollection<GroupInfo> Groups { get; } = [];
+
+    public DashboardViewModel()
+    {
+        WeakReferenceMessenger.Default.Register(this);
+    }
+
+    public void Receive(MetadataChangedMessage message)
+    {
+        if (message.Path != null)
+        {
+            CurrentPath = message.Path;
+            if (!RecentFiles.Contains(message.Path))
+            {
+                RecentFiles.Insert(0, message.Path);
+                if (RecentFiles.Count > 5)
+                {
+                    RecentFiles.RemoveAt(5);
+                }
+            }
+        }
+        UpdateStats(message.Value);
+    }
+
+    [RelayCommand]
+    private void RequestOpenImage() => WeakReferenceMessenger.Default.Send(new OpenImageRequestMessage());
+
+    public class GroupInfo
+    {
+        public string Name { get; set; } = "";
+        public string SizeText { get; set; } = "";
+        public string FlagsText { get; set; } = "";
+    }
+
+    public void UpdateStats(LpMetadata? metadata)
+    {
+        if (metadata == null)
+        {
+            return;
+        }
+
+        Groups.Clear();
+        foreach (var group in metadata.Groups)
+        {
+            Groups.Add(new GroupInfo
+            {
+                Name = group.GetName(),
+                SizeText = group.MaximumSize == 0 ? "Unlimited" : $"{group.MaximumSize / (1024 * 1024.0):F2} MiB",
+                FlagsText = group.Flags == 0 ? "Default" : $"Flags: 0x{group.Flags:X}"
+            });
+        }
+
+        var totalSize = metadata.BlockDevices[0].Size;
+        DeviceSize = $"{totalSize / (1024 * 1024 * 1024.0):F2} GB";
+        SlotCount = metadata.Geometry.MetadataSlotCount.ToString();
+        MetadataSize = $"{metadata.Geometry.MetadataMaxSize / 1024.0:F0} KB";
+
+        // Calculate usage: sum of all extents used by partitions
+        ulong usedSectors = 0;
+        foreach (var extent in metadata.Extents)
+        {
+            if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
+            {
+                usedSectors += extent.NumSectors;
+            }
+        }
+
+        var usedBytes = usedSectors * 512;
+        UsagePercentage = (double)usedBytes / totalSize * 100;
+        UsageText = $"{UsagePercentage:F1}% Used ({usedBytes / (1024 * 1024 * 1024.0):F2} GB / {DeviceSize})";
+    }
+}

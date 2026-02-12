@@ -1,0 +1,27 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PartitionToolSharp.Desktop.ViewModels"
+             xmlns:u="https://irihi.tech/ursa"
+             x:Class="PartitionToolSharp.Desktop.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+    
+    <ScrollViewer>
+        <StackPanel Margin="40" Spacing="20" MaxWidth="600" HorizontalAlignment="Left">
+            <TextBlock Text="Settings" FontSize="24" FontWeight="Bold" Margin="0,0,0,20"/>
+            
+            <u:Banner Header="Appearance" Classes="Information">
+                <StackPanel Orientation="Horizontal" Spacing="20" VerticalAlignment="Center">
+                    <TextBlock Text="Dark Mode" VerticalAlignment="Center"/>
+                    <ToggleSwitch IsChecked="{Binding UseDarkTheme}"/>
+                </StackPanel>
+            </u:Banner>
+            
+            <u:Banner Header="Application Info" Classes="Success">
+                 <StackPanel Spacing="5">
+                     <TextBlock Text="PartitionToolSharp v1.0.0-alpha"/>
+                     <TextBlock Text="Powered by Avalonia, Ursa and Semi" Classes="Secondary" FontSize="12"/>
+                 </StackPanel>
+            </u:Banner>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:PartitionToolSharp.Desktop.ViewModels"
+             xmlns:u="https://irihi.tech/ursa"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="PartitionToolSharp.Desktop.Views.FlasherView"
+             x:DataType="vm:FlasherViewModel">
+    <ScrollViewer Padding="30">
+        <StackPanel Spacing="30">
+            <TextBlock Text="Flasher &amp; Image Tools" FontSize="24" FontWeight="SemiBold"/>
+            
+            <Grid ColumnDefinitions="*, *" HorizontalAlignment="Stretch">
+                <!-- Sparse Tools -->
+                <u:Banner Grid.Column="0" Header="Sparse Image Converter" Classes="Information" Margin="0,0,10,0">
+                    <StackPanel Spacing="15" Margin="0,10,0,0">
+                        <TextBlock Text="Convert between Android Sparse and Raw images." Classes="Secondary" FontSize="12" TextWrapping="Wrap"/>
+                        
+                        <Button Content="Sparse to Raw..." 
+                                Command="{Binding ConvertSparseToRawCommand}"
+                                HorizontalAlignment="Stretch"
+                                Classes="Primary" Theme="{DynamicResource SolidButton}"/>
+                        
+                        <Button Content="Raw to Sparse..." 
+                                Command="{Binding ConvertRawToSparseCommand}"
+                                HorizontalAlignment="Stretch"
+                                Classes="Primary" Theme="{DynamicResource SolidButton}"/>
+                    </StackPanel>
+                </u:Banner>
+
+                <!-- Future Flash Tools -->
+                <u:Banner Grid.Column="1" Header="Flash Utility" Classes="Warning" Margin="10,0,0,0">
+                    <StackPanel Spacing="15" Margin="0,10,0,0">
+                        <TextBlock Text="Flash images directly to device partitions (Coming Soon)." Classes="Secondary" FontSize="12" TextWrapping="Wrap"/>
+                        <ProgressBar IsIndeterminate="True" Height="4" IsVisible="False"/>
+                        <Button Content="Flash Partition" IsEnabled="False" HorizontalAlignment="Stretch"/>
+                    </StackPanel>
+                </u:Banner>
+            </Grid>
+
+            <!-- Status Logs -->
+            <Border Background="{DynamicResource SemiGrey1}" 
+                    BorderBrush="{DynamicResource SemiGrey3}" 
+                    BorderThickness="1" 
+                    CornerRadius="4" 
+                    MinHeight="150">
+                <ScrollViewer x:Name="LogScrollViewer">
+                    <ItemsControl ItemsSource="{Binding Logs}" Margin="10">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <SelectableTextBlock Text="{Binding}" 
+                                                   FontSize="12" 
+                                                   FontFamily="Consolas,Monospace"
+                                                   Margin="0,2"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

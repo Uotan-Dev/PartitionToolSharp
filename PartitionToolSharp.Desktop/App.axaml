@@ -9,6 +9,7 @@
 
     <Application.Resources>
         <conv:BitwiseAndToBoolConverter x:Key="BitwiseAndToBoolConverter"/>
+        <conv:NumericLessThanConverter x:Key="NumericLessThanConverter"/>
     </Application.Resources>
 
     <Application.Styles>

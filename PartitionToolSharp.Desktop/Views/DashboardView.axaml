@@ -1,0 +1,88 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:PartitionToolSharp.Desktop.ViewModels"
+             xmlns:u="https://irihi.tech/ursa"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="PartitionToolSharp.Desktop.Views.DashboardView"
+             x:DataType="vm:DashboardViewModel">
+    
+    <ScrollViewer Padding="30">
+        <StackPanel Spacing="30">
+            <!-- Header section -->
+            <StackPanel Spacing="10">
+                <TextBlock Text="Device Overview" FontSize="24" FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal" Spacing="5" IsVisible="{Binding CurrentPath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                    <TextBlock Text="Current Image:" Classes="Secondary"/>
+                    <TextBlock Text="{Binding CurrentPath}" Foreground="{DynamicResource SemiBlue6}"/>
+                </StackPanel>
+            </StackPanel>
+
+            <Grid ColumnDefinitions="*, 300" HorizontalAlignment="Stretch">
+                <StackPanel Grid.Column="0" Spacing="30">
+                    <!-- Status Cards -->
+                    <UniformGrid Columns="3">
+                        <u:Banner Header="Total Device Size" Content="{Binding DeviceSize}" Classes="Information" Margin="5"/>
+                        <u:Banner Header="Metadata Slots" Content="{Binding SlotCount}" Classes="Success" Margin="5"/>
+                        <u:Banner Header="Metadata Max Size" Content="{Binding MetadataSize}" Classes="Warning" Margin="5"/>
+                    </UniformGrid>
+
+                    <!-- Usage Progress -->
+                    <Border Classes="Card" Padding="20" Background="{DynamicResource SemiGrey1}" CornerRadius="8">
+                        <StackPanel Spacing="15">
+                            <Grid ColumnDefinitions="*, Auto">
+                                <TextBlock Text="Space Utilization" FontWeight="Medium"/>
+                                <TextBlock Grid.Column="1" Text="{Binding UsageText}" Classes="Secondary"/>
+                            </Grid>
+                            <ProgressBar Maximum="100" Value="{Binding UsagePercentage}" Height="12" ShowProgressText="False"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Partition Groups -->
+                    <StackPanel Spacing="15">
+                        <TextBlock Text="Partition Groups" FontSize="18" FontWeight="SemiBold"/>
+                        <ItemsControl ItemsSource="{Binding Groups}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <u:Banner Header="{Binding Name}" Margin="0,5">
+                                        <StackPanel Orientation="Horizontal" Spacing="20">
+                                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                                <TextBlock Text="Size Limit:" Classes="Secondary"/>
+                                                <TextBlock Text="{Binding SizeText}"/>
+                                            </StackPanel>
+                                            <Border Background="{DynamicResource SemiGrey2}" Padding="8,2" CornerRadius="4">
+                                                <TextBlock Text="{Binding FlagsText}" FontSize="12" Foreground="{DynamicResource SemiGrey7}"/>
+                                            </Border>
+                                        </StackPanel>
+                                    </u:Banner>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Sidebar on Dashboard -->
+                <StackPanel Grid.Column="1" Margin="30,0,0,0" Spacing="20">
+                    <TextBlock Text="Recent Files" FontSize="18" FontWeight="SemiBold"/>
+                    <ItemsControl ItemsSource="{Binding RecentFiles}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Classes="Tertiary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Margin="0,2">
+                                    <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12"/>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    
+                    <u:Banner Header="Quick Actions" Classes="Information">
+                        <StackPanel Spacing="10">
+                            <Button Content="Open New Image" Command="{Binding RequestOpenImageCommand}" Classes="Primary" Theme="{DynamicResource SolidButton}" HorizontalAlignment="Stretch"/>
+                            <Button Content="Settings" Classes="Basic" HorizontalAlignment="Stretch"/>
+                        </StackPanel>
+                    </u:Banner>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
