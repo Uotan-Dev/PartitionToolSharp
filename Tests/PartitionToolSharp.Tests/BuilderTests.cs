@@ -98,9 +98,9 @@ public class BuilderTests
         var superBuilder = new SuperImageBuilder(DeviceSize, MetadataMaxSize, MetadataSlotCount);
         superBuilder.AddGroup("qti_dynamic_partitions", DeviceSize);
         superBuilder.AddPartition("system", 1024 * 1024, "qti_dynamic_partitions", MetadataFormat.LP_PARTITION_ATTR_NONE);
-        
+
         var sparseFile = superBuilder.Build();
-        
+
         Assert.NotNull(sparseFile);
         Assert.Equal(DeviceSize / 4096, (ulong)sparseFile.Header.TotalBlocks);
         Assert.Contains(sparseFile.Chunks, c => c.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW);

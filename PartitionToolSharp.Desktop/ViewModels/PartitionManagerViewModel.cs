@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading.Tasks;
@@ -115,7 +114,8 @@ public partial class PartitionManagerViewModel : ObservableObject
             }
 
             // 在UI线程更新集合
-            Dispatcher.UIThread.Post(() => {
+            Dispatcher.UIThread.Post(() =>
+            {
                 Partitions.Clear();
                 foreach (var part in _metadata.Partitions)
                 {

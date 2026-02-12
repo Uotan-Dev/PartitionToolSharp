@@ -1,5 +1,3 @@
-using System;
-
 namespace LibLpSharp;
 
 public static class LpLogger
