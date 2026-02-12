@@ -15,7 +15,7 @@ public partial class App : Application
     public override void OnFrameworkInitializationCompleted()
     {
         ConfigService.Load();
-        
+
         // Apply theme
         RequestedThemeVariant = ConfigService.Current.Theme switch
         {
@@ -34,7 +34,7 @@ public partial class App : Application
             };
 
             desktop.MainWindow = mainView;
-            
+
             desktop.ShutdownRequested += (s, e) =>
             {
                 if (desktop.MainWindow != null)

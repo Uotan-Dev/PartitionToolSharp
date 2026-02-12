@@ -26,6 +26,7 @@ public partial class PartitionManagerViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(MovePartitionUpCommand))]
     [NotifyCanExecuteChangedFor(nameof(MovePartitionDownCommand))]
     [NotifyCanExecuteChangedFor(nameof(ExtractPartitionCommand))]
+    [NotifyCanExecuteChangedFor(nameof(FlashSelectedPartitionCommand))]
     private PartitionEntry? _selectedPartition;
 
     [ObservableProperty]
@@ -69,17 +70,18 @@ public partial class PartitionManagerViewModel : ObservableObject
     private void OnMetadataChanged()
     {
         UpdateUsageStats();
-        
+
         // Notify UI that the filtered view needs refreshing
         var current = SelectedPartition;
         OnPropertyChanged(nameof(FilteredPartitions));
-        
+
         // Restore selection if it was lost during collection refresh
         if (current != null && SelectedPartition != current)
         {
             SelectedPartition = current;
         }
 
+        RefreshCommandStates();
         WeakReferenceMessenger.Default.Send(new MetadataChangedMessage(_metadata, CurrentFilePath));
     }
 
@@ -138,17 +140,20 @@ public partial class PartitionManagerViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanMoveUp))]
     private void MovePartitionUp()
     {
-        if (SelectedPartition is not { } p) return;
+        if (SelectedPartition is not { } p)
+        {
+            return;
+        }
 
         var index = Partitions.IndexOf(p);
         if (index > 0)
         {
             Partitions.RemoveAt(index);
             Partitions.Insert(index - 1, p);
-            
+
             // Re-select the item after move
             SelectedPartition = p;
-            
+
             OnMetadataChanged();
             RefreshCommandStates();
             StatusMessage = $"Moved {p.Name} up";
@@ -160,7 +165,10 @@ public partial class PartitionManagerViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanMoveDown))]
     private void MovePartitionDown()
     {
-        if (SelectedPartition is not { } p) return;
+        if (SelectedPartition is not { } p)
+        {
+            return;
+        }
 
         var index = Partitions.IndexOf(p);
         if (index >= 0 && index < Partitions.Count - 1)
@@ -184,6 +192,7 @@ public partial class PartitionManagerViewModel : ObservableObject
         MovePartitionUpCommand.NotifyCanExecuteChanged();
         MovePartitionDownCommand.NotifyCanExecuteChanged();
         DeleteSelectedPartitionCommand.NotifyCanExecuteChanged();
+        FlashSelectedPartitionCommand.NotifyCanExecuteChanged();
         if (ExtractPartitionCommand is IRelayCommand extract)
         {
             extract.NotifyCanExecuteChanged();
@@ -397,11 +406,12 @@ public partial class PartitionManagerViewModel : ObservableObject
         {
             Partitions.Clear();
             _metadata = null;
+            RefreshCommandStates();
             GC.Collect();
             GC.WaitForPendingFinalizers();
 
             CurrentFilePath = path;
-            
+
             // Save to config
             ConfigService.Current.LastOpenedFilePath = path;
             ConfigService.Save();
@@ -439,6 +449,7 @@ public partial class PartitionManagerViewModel : ObservableObject
             {
                 StatusMessage = "加载失败: 无法解析元数据";
                 await Ursa.Controls.MessageBox.ShowOverlayAsync("加载失败: 无法解析元数据 (Metadata 为空)", "错误");
+                RefreshCommandStates();
                 return;
             }
 
@@ -478,6 +489,7 @@ public partial class PartitionManagerViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = $"错误: {ex.Message}";
+            RefreshCommandStates();
         }
     }
 
@@ -516,9 +528,13 @@ public partial class PartitionManagerViewModel : ObservableObject
                             if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
                             {
                                 var offset = extent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
-                                var fsSize = Utility.DetectFilesystemSize(targetStream!, offset);
+                                var fsInfo = Utility.DetectFilesystem(targetStream!, offset);
 
-                                Dispatcher.UIThread.Post(() => entry.FileSystemSize = fsSize);
+                                Dispatcher.UIThread.Post(() =>
+                                {
+                                    entry.FileSystemSize = fsInfo.Size;
+                                    entry.FileSystemType = fsInfo.Type;
+                                });
                             }
                         }
                     }
@@ -539,4 +555,83 @@ public partial class PartitionManagerViewModel : ObservableObject
             StatusMessage = "文件系统大小探测失败";
         }
     }
+
+    private PartitionReadStream? CreatePartitionStream(string partitionName)
+    {
+        if (string.IsNullOrEmpty(CurrentFilePath) || _metadata == null)
+        {
+            return null;
+        }
+
+        var fs = File.OpenRead(CurrentFilePath);
+        Stream baseStream;
+        var disposables = new List<IDisposable>();
+
+        var magic = new byte[4];
+        fs.ReadExactly(magic, 0, 4);
+        fs.Seek(0, SeekOrigin.Begin);
+
+        if (BitConverter.ToUInt32(magic, 0) == SparseFormat.SPARSE_HEADER_MAGIC)
+        {
+            var sparse = SparseFile.FromImageFile(CurrentFilePath);
+            disposables.Add(sparse);
+            baseStream = new SparseStream(sparse);
+        }
+        else
+        {
+            baseStream = fs;
+        }
+
+        LpMetadataPartition? lpPart = null;
+        foreach (var p in _metadata.Partitions)
+        {
+            if (p.GetName() == partitionName)
+            {
+                lpPart = p;
+                break;
+            }
+        }
+
+        if (lpPart == null)
+        {
+            baseStream.Dispose();
+            foreach (var d in disposables)
+            {
+                d.Dispose();
+            }
+            return null;
+        }
+
+        return new PartitionReadStream(baseStream, _metadata, lpPart.Value, disposables);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanFlash))]
+    private async Task FlashSelectedPartitionAsync()
+    {
+        if (SelectedPartition != null)
+        {
+            try
+            {
+                var partitionStream = CreatePartitionStream(SelectedPartition.Name);
+                if (partitionStream == null)
+                {
+                    StatusMessage = "准备刷入失败: 找不到分区或元数据无效";
+                    return;
+                }
+
+                WeakReferenceMessenger.Default.Send(new FlashPartitionMessage(SelectedPartition.Name, null, partitionStream, partitionStream.Length));
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"准备刷入失败: {ex.Message}";
+                await Ursa.Controls.MessageBox.ShowOverlayAsync($"准备刷入失败: {ex.Message}", "错误");
+            }
+        }
+        else
+        {
+            WeakReferenceMessenger.Default.Send(new FlashPartitionMessage("super", CurrentFilePath));
+        }
+    }
+
+    private bool CanFlash() => _metadata != null;
 }

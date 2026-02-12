@@ -26,7 +26,7 @@ public partial class PartitionEntry : ObservableObject
         set
         {
             var newVal = value ? (Attributes | 1) : (Attributes & ~1u);
-            if (newVal != Attributes) 
+            if (newVal != Attributes)
             {
                 Attributes = newVal;
                 OnPropertyChanged(nameof(IsReadOnly));
@@ -40,7 +40,7 @@ public partial class PartitionEntry : ObservableObject
         set
         {
             var newVal = value ? (Attributes | 2) : (Attributes & ~2u);
-            if (newVal != Attributes) 
+            if (newVal != Attributes)
             {
                 Attributes = newVal;
                 OnPropertyChanged(nameof(IsSlot));
@@ -52,9 +52,24 @@ public partial class PartitionEntry : ObservableObject
     [NotifyPropertyChangedFor(nameof(FileSystemSizeText))]
     private ulong _fileSystemSize;
 
-    public string FileSystemSizeText => FileSystemSize > 0
-        ? $"{FileSystemSize / (1024 * 1024.0):F2} MiB"
-        : "Unknown / Raw";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FileSystemSizeText))]
+    private string _fileSystemType = "Unknown";
+
+    public string FileSystemSizeText
+    {
+        get
+        {
+            if (FileSystemType == "Unknown") return "Unformatted";
+            if (FileSystemType == "Raw") return "No FS Header";
+            
+            if (FileSystemSize > 0)
+            {
+                return $"({FileSystemSize / (1024 * 1024.0):F2} MiB)";
+            }
+            return string.Empty;
+        }
+    }
 
     public Action? OnChanged { get; set; }
 

@@ -7,8 +7,6 @@
     
     <ScrollViewer>
         <StackPanel Margin="40" Spacing="20" MaxWidth="600" HorizontalAlignment="Left">
-            <TextBlock Text="Settings" FontSize="24" FontWeight="Bold" Margin="0,0,0,20"/>
-            
             <u:Banner Header="Appearance" Classes="Information">
                 <StackPanel Orientation="Horizontal" Spacing="20" VerticalAlignment="Center">
                     <TextBlock Text="Dark Mode" VerticalAlignment="Center"/>

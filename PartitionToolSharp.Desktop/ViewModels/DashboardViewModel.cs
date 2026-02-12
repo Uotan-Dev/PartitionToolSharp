@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
@@ -36,7 +35,7 @@ public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataC
     public DashboardViewModel()
     {
         WeakReferenceMessenger.Default.Register(this);
-        
+
         foreach (var file in ConfigService.Current.RecentFiles)
         {
             RecentFiles.Add(file);
@@ -52,14 +51,14 @@ public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataC
             {
                 RecentFiles.Remove(message.Path);
             }
-            
+
             RecentFiles.Insert(0, message.Path);
             while (RecentFiles.Count > 5)
             {
                 RecentFiles.RemoveAt(RecentFiles.Count - 1);
             }
 
-            ConfigService.Current.RecentFiles = RecentFiles.ToList();
+            ConfigService.Current.RecentFiles = [.. RecentFiles];
             ConfigService.Save();
         }
         UpdateStats(message.Value);

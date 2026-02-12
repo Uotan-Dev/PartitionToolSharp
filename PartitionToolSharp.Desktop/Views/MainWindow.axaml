@@ -17,17 +17,20 @@
     </Design.DataContext>
 
     <u:UrsaWindow.TitleBarContent>
-        <TextBlock Text="PartitionToolSharp" VerticalAlignment="Center" Margin="8,0"/>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="12,0">
+            <TextBlock Text="PartitionToolSharp" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <TextBlock Text="|" Foreground="{DynamicResource SemiGrey4}" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding ActiveMenuHeader}" Foreground="{DynamicResource SemiGrey7}" VerticalAlignment="Center"/>
+        </StackPanel>
     </u:UrsaWindow.TitleBarContent>
 
     <Grid ColumnDefinitions="Auto, *" Margin="0,32,0,0">
         <!-- Sidebar -->
         <Border Grid.Column="0" Width="220" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="0,0,1,0">
             <StackPanel Spacing="5" Margin="0,20">
-                <TextBlock Text="PartitionToolSharp" FontSize="18" FontWeight="Bold" Margin="20,0,20,20"/>
-                
                 <u:NavMenu HorizontalAlignment="Stretch">
                     <u:NavMenuItem Header="Dashboard" 
+                                   IsSelected="{Binding ActiveMenuHeader, Converter={StaticResource EqualityConverter}, ConverterParameter=Dashboard}"
                                    Command="{Binding NavigateCommand}" 
                                    CommandParameter="Dashboard">
                         <u:NavMenuItem.Icon>
@@ -35,6 +38,7 @@
                         </u:NavMenuItem.Icon>
                     </u:NavMenuItem>
                     <u:NavMenuItem Header="Partition Manager" 
+                                   IsSelected="{Binding ActiveMenuHeader, Converter={StaticResource EqualityConverter}, ConverterParameter='Partition Manager'}"
                                    Command="{Binding NavigateCommand}" 
                                    CommandParameter="PartitionManager">
                         <u:NavMenuItem.Icon>
@@ -42,6 +46,7 @@
                         </u:NavMenuItem.Icon>
                     </u:NavMenuItem>
                     <u:NavMenuItem Header="Flasher &amp; Images" 
+                                   IsSelected="{Binding ActiveMenuHeader, Converter={StaticResource EqualityConverter}, ConverterParameter='Flasher &amp; Images'}"
                                    Command="{Binding NavigateCommand}" 
                                    CommandParameter="Flasher">
                         <u:NavMenuItem.Icon>
@@ -49,6 +54,7 @@
                         </u:NavMenuItem.Icon>
                     </u:NavMenuItem>
                     <u:NavMenuItem Header="Settings" 
+                                   IsSelected="{Binding ActiveMenuHeader, Converter={StaticResource EqualityConverter}, ConverterParameter=Settings}"
                                    Command="{Binding NavigateCommand}" 
                                    CommandParameter="Settings">
                         <u:NavMenuItem.Icon>

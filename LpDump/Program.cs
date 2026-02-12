@@ -46,7 +46,7 @@ rootCommand.SetHandler((superImage, useJson) =>
         }
         else
         {
-            DumpText(metadata);
+            DumpText(metadata, inputStream);
         }
 
         sparseFile?.Dispose();
@@ -64,7 +64,7 @@ rootCommand.SetHandler((superImage, useJson) =>
 
 return await rootCommand.InvokeAsync(args);
 
-void DumpText(LpMetadata metadata)
+void DumpText(LpMetadata metadata, Stream inputStream)
 {
     Console.WriteLine("Metadata version: {0}.{1}", metadata.Header.MajorVersion, metadata.Header.MinorVersion);
     Console.WriteLine("Metadata size: {0} bytes", metadata.Geometry.MetadataMaxSize);
@@ -98,6 +98,23 @@ void DumpText(LpMetadata metadata)
         Console.WriteLine("Partition: {0}", part.GetName());
         Console.WriteLine("  Group: {0}", metadata.Groups[(int)part.GroupIndex].GetName());
         Console.WriteLine("  Attributes: 0x{0:X}", part.Attributes);
+
+        // 检测文件系统
+        if (part.NumExtents > 0)
+        {
+            var firstExtent = metadata.Extents[(int)part.FirstExtentIndex];
+            if (firstExtent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
+            {
+                var offset = (ulong)firstExtent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
+                var fsInfo = Utility.DetectFilesystem(inputStream, offset);
+                Console.WriteLine("  Filesystem: {0}", fsInfo.Type);
+                if (fsInfo.Size > 0)
+                {
+                    Console.WriteLine("  Filesystem Size: {0} bytes", fsInfo.Size);
+                }
+            }
+        }
+
         Console.WriteLine("  Extents:");
         for (uint i = 0; i < part.NumExtents; i++)
         {

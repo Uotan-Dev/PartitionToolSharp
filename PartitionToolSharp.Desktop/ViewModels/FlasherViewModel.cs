@@ -1,7 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -30,10 +29,21 @@ public partial class FlasherViewModel : ObservableObject
     [ObservableProperty]
     private bool _isBusy;
 
+    private Stream? _directStream;
+    private long _directStreamLength;
+
     public ObservableCollection<string> ConnectedDevices { get; } = [];
     public ObservableCollection<string> Logs { get; } = [];
 
-    private void Log(string message) => Avalonia.Threading.Dispatcher.UIThread.Post(() => Logs.Add($"[{DateTime.Now:HH:mm:ss}] {message}"));
+    public void SetDirectStream(Stream stream, long length)
+    {
+        _directStream?.Dispose();
+        _directStream = stream;
+        _directStreamLength = length;
+        SelectedImagePath = "[直接数据流]";
+    }
+
+    public void Log(string message) => Avalonia.Threading.Dispatcher.UIThread.Post(() => Logs.Add($"[{DateTime.Now:HH:mm:ss}] {message}"));
 
     [RelayCommand]
     private void RefreshDevices()
@@ -51,7 +61,7 @@ public partial class FlasherViewModel : ObservableObject
             {
                 SelectedDevice = ConnectedDevices[0];
             }
-            
+
             Log($"Found {ConnectedDevices.Count} device(s).");
         }
         catch (Exception ex)
@@ -64,7 +74,10 @@ public partial class FlasherViewModel : ObservableObject
     private async Task SelectImageAsync()
     {
         var storage = GetStorage();
-        if (storage == null) return;
+        if (storage == null)
+        {
+            return;
+        }
 
         var result = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
         {
@@ -75,6 +88,8 @@ public partial class FlasherViewModel : ObservableObject
 
         if (result.Count > 0)
         {
+            _directStream?.Dispose();
+            _directStream = null;
             SelectedImagePath = result[0].Path.LocalPath;
             if (string.IsNullOrEmpty(PartitionName))
             {
@@ -98,15 +113,21 @@ public partial class FlasherViewModel : ObservableObject
             return;
         }
 
-        if (string.IsNullOrEmpty(SelectedImagePath) || !File.Exists(SelectedImagePath))
+        if (_directStream == null && (string.IsNullOrEmpty(SelectedImagePath) || !File.Exists(SelectedImagePath)))
         {
-            await Ursa.Controls.MessageBox.ShowOverlayAsync("请选择有效的镜像文件。", "提示");
+            await Ursa.Controls.MessageBox.ShowOverlayAsync("请选择有效的镜像文件或使用联动数据流。", "提示");
             return;
         }
 
         IsBusy = true;
         Status = "Flashing...";
-        Log($"Starting flash: {SelectedImagePath} -> {PartitionName} on {SelectedDevice}");
+
+        Log("========================================");
+        Log($"开始刷入操作:");
+        Log($"目标分区: {PartitionName}");
+        Log($"镜像来源: {(_directStream != null ? "[联动数据流]" : SelectedImagePath)}");
+        Log($"目标设备: {SelectedDevice}");
+        Log("========================================");
 
         try
         {
@@ -115,22 +136,39 @@ public partial class FlasherViewModel : ObservableObject
                 var fb = new Fastboot(SelectedDevice);
                 try
                 {
-                    Log("Connecting to device...");
+                    Log("> 正在连接设备...");
                     fb.Connect();
-                    
-                    Log("Uploading data...");
-                    fb.UploadData(SelectedImagePath);
-                    
-                    Log($"Executing flash:{PartitionName} command...");
-                    var resp = fb.Command($"flash:{PartitionName}");
-                    
-                    if (resp.Status == Fastboot.Status.Okay)
+
+                    Log("> 检查设备模式...");
+                    var isUserspaceResp = fb.Command("getvar:is-userspace");
+                    var isFastbootd = isUserspaceResp.Status == Fastboot.Status.Okay && isUserspaceResp.Payload.Trim() == "yes";
+
+                    if (!PartitionName.Equals("super", StringComparison.OrdinalIgnoreCase) && !isFastbootd)
                     {
-                        Log("Flash successful!");
+                        throw new Exception("刷入 super 内的分区需要设备处于 fastbootd 模式。请在设备上执行 'fastboot reboot fastboot'。");
+                    }
+
+                    if (_directStream != null)
+                    {
+                        Log($"> 正在从流上传数据 (大小: {_directStreamLength / 1024.0 / 1024.0:F2} MiB)...");
+                        fb.UploadData(_directStream);
                     }
                     else
                     {
-                        Log($"Flash failed: {resp.Payload}");
+                        Log($"> 正在上传数据 (大小: {new FileInfo(SelectedImagePath).Length / 1024.0 / 1024.0:F2} MiB)...");
+                        fb.UploadData(SelectedImagePath);
+                    }
+
+                    Log($"> 正在执行刷入命令: flash:{PartitionName} ...");
+                    var resp = fb.Command($"flash:{PartitionName}");
+
+                    if (resp.Status == Fastboot.Status.Okay)
+                    {
+                        Log("OKAY [完成]");
+                    }
+                    else
+                    {
+                        Log($"FAIL [失败]: {resp.Payload}");
                         throw new Exception(resp.Payload);
                     }
                 }
@@ -140,6 +178,7 @@ public partial class FlasherViewModel : ObservableObject
                 }
             });
 
+            Log("刷入成功！");
             await Ursa.Controls.MessageBox.ShowOverlayAsync("刷入成功！", "提示");
         }
         catch (Exception ex)

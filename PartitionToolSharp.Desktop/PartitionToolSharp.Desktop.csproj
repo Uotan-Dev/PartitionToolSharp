@@ -6,6 +6,7 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     
     <!-- Native AOT Support -->
     <PublishAot>true</PublishAot>
@@ -30,5 +31,6 @@
   <ItemGroup>
     <ProjectReference Include="..\LibLpSharp\LibLpSharp.csproj" />
     <ProjectReference Include="..\LibSpraseSharp\LibSpraseSharp.csproj" />
+    <ProjectReference Include="..\LibFastbootSharp\LibFastbootSharp.csproj" />
   </ItemGroup>
 </Project>
