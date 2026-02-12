@@ -29,12 +29,51 @@
                     </StackPanel>
                 </u:Banner>
 
-                <!-- Future Flash Tools -->
+                <!-- Flash Tools -->
                 <u:Banner Grid.Column="1" Header="Flash Utility" Classes="Warning" Margin="10,0,0,0">
                     <StackPanel Spacing="15" Margin="0,10,0,0">
-                        <TextBlock Text="Flash images directly to device partitions (Coming Soon)." Classes="Secondary" FontSize="12" TextWrapping="Wrap"/>
-                        <ProgressBar IsIndeterminate="True" Height="4" IsVisible="False"/>
-                        <Button Content="Flash Partition" IsEnabled="False" HorizontalAlignment="Stretch"/>
+                        <TextBlock Text="Flash images directly to device partitions using Fastboot." Classes="Secondary" FontSize="12" TextWrapping="Wrap"/>
+                        
+                        <Grid ColumnDefinitions="*, Auto">
+                            <ComboBox Grid.Column="0" 
+                                      ItemsSource="{Binding ConnectedDevices}" 
+                                      SelectedItem="{Binding SelectedDevice}"
+                                      PlaceholderText="Select Device"
+                                      HorizontalAlignment="Stretch"/>
+                            <Button Grid.Column="1" 
+                                    Command="{Binding RefreshDevicesCommand}" 
+                                    Margin="5,0,0,0"
+                                    Content="Refresh"/>
+                        </Grid>
+
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="Partition:" FontSize="12" Foreground="{DynamicResource SemiGrey6}"/>
+                            <TextBox Text="{Binding PartitionName}" 
+                                     Watermark="e.g. recovery, boot, system"/>
+                        </StackPanel>
+
+                        <Grid ColumnDefinitions="*, Auto">
+                            <TextBox Grid.Column="0" 
+                                     Text="{Binding SelectedImagePath}" 
+                                     IsReadOnly="True"
+                                     Watermark="Select Image File..."/>
+                            <Button Grid.Column="1" 
+                                    Command="{Binding SelectImageCommand}" 
+                                    Margin="5,0,0,0"
+                                    Content="Browse"/>
+                        </Grid>
+
+                        <ProgressBar IsIndeterminate="True" Height="4" IsVisible="{Binding IsBusy}"/>
+                        <Button Content="Flash Partition" 
+                                Command="{Binding FlashCommand}"
+                                IsEnabled="{Binding !IsBusy}"
+                                HorizontalAlignment="Stretch"
+                                Classes="Warning" Theme="{DynamicResource SolidButton}"/>
+                        
+                        <Button Content="Reboot Device" 
+                                Command="{Binding RebootCommand}"
+                                HorizontalAlignment="Stretch"
+                                Classes="Secondary"/>
                     </StackPanel>
                 </u:Banner>
             </Grid>

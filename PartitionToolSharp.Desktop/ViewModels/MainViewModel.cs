@@ -29,7 +29,7 @@ public partial class MainViewModel : ObservableObject, IRecipient<OpenImageReque
         }
     }
 
-    public async void Receive(OpenImageRequestMessage message) => await OpenImageGlobalAsync();
+    public async void Receive(OpenImageRequestMessage message) => await OpenImageGlobalAsync(message.FilePath);
 
     [RelayCommand]
     private void Navigate(string target)
@@ -45,9 +45,16 @@ public partial class MainViewModel : ObservableObject, IRecipient<OpenImageReque
     }
 
     [RelayCommand]
-    private async Task OpenImageGlobalAsync()
+    private async Task OpenImageGlobalAsync(string? path = null)
     {
         Navigate("PartitionManager");
-        await _partitionManagerVM.OpenFileAsync();
+        if (string.IsNullOrEmpty(path))
+        {
+            await _partitionManagerVM.OpenFileAsync();
+        }
+        else
+        {
+            await _partitionManagerVM.LoadFileAsync(path);
+        }
     }
 }

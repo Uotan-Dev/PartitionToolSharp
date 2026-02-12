@@ -6,7 +6,8 @@
              xmlns:u="https://irihi.tech/ursa"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
              x:Class="PartitionToolSharp.Desktop.Views.DashboardView"
-             x:DataType="vm:DashboardViewModel">
+             x:DataType="vm:DashboardViewModel"
+             x:Name="RootDashboard">
     
     <ScrollViewer Padding="30">
         <StackPanel Spacing="30">
@@ -68,7 +69,13 @@
                     <ItemsControl ItemsSource="{Binding RecentFiles}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Button Classes="Tertiary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Margin="0,2">
+                                <Button Classes="Tertiary" 
+                                        HorizontalAlignment="Stretch" 
+                                        HorizontalContentAlignment="Left" 
+                                        Margin="0,2"
+                                        x:CompileBindings="False"
+                                        Command="{Binding $parent[UserControl].DataContext.OpenRecentFileCommand}"
+                                        CommandParameter="{Binding}">
                                     <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12"/>
                                 </Button>
                             </DataTemplate>

@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using LibLpSharp;
 using PartitionToolSharp.Desktop.Models;
+using PartitionToolSharp.Desktop.Services;
 
 namespace PartitionToolSharp.Desktop.ViewModels;
 
@@ -34,6 +36,11 @@ public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataC
     public DashboardViewModel()
     {
         WeakReferenceMessenger.Default.Register(this);
+        
+        foreach (var file in ConfigService.Current.RecentFiles)
+        {
+            RecentFiles.Add(file);
+        }
     }
 
     public void Receive(MetadataChangedMessage message)
@@ -41,20 +48,28 @@ public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataC
         if (message.Path != null)
         {
             CurrentPath = message.Path;
-            if (!RecentFiles.Contains(message.Path))
+            if (RecentFiles.Contains(message.Path))
             {
-                RecentFiles.Insert(0, message.Path);
-                if (RecentFiles.Count > 5)
-                {
-                    RecentFiles.RemoveAt(5);
-                }
+                RecentFiles.Remove(message.Path);
             }
+            
+            RecentFiles.Insert(0, message.Path);
+            while (RecentFiles.Count > 5)
+            {
+                RecentFiles.RemoveAt(RecentFiles.Count - 1);
+            }
+
+            ConfigService.Current.RecentFiles = RecentFiles.ToList();
+            ConfigService.Save();
         }
         UpdateStats(message.Value);
     }
 
     [RelayCommand]
     private void RequestOpenImage() => WeakReferenceMessenger.Default.Send(new OpenImageRequestMessage());
+
+    [RelayCommand]
+    private void OpenRecentFile(string path) => WeakReferenceMessenger.Default.Send(new OpenImageRequestMessage(path));
 
     public class GroupInfo
     {

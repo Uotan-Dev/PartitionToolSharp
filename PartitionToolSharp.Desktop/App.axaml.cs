@@ -17,9 +17,12 @@ public partial class App : Application
         ConfigService.Load();
         
         // Apply theme
-        RequestedThemeVariant = ConfigService.Current.Theme == "Dark" 
-            ? ThemeVariant.Dark 
-            : ThemeVariant.Light;
+        RequestedThemeVariant = ConfigService.Current.Theme switch
+        {
+            "Dark" => ThemeVariant.Dark,
+            "Light" => ThemeVariant.Light,
+            _ => ThemeVariant.Default // Follow System
+        };
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

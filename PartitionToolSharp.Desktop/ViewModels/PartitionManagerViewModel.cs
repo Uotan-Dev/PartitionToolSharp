@@ -391,7 +391,7 @@ public partial class PartitionManagerViewModel : ObservableObject
         }
     }
 
-    private async Task LoadFileAsync(string path)
+    public async Task LoadFileAsync(string path)
     {
         try
         {
