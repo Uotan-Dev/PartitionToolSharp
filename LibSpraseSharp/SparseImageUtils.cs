@@ -70,8 +70,15 @@ public static class SparseImageUtils
     /// </summary>
     public static FileComparisonResult CompareFiles(string file1, string file2)
     {
-        if (!File.Exists(file1)) throw new FileNotFoundException($"文件不存在: {file1}");
-        if (!File.Exists(file2)) throw new FileNotFoundException($"文件不存在: {file2}");
+        if (!File.Exists(file1))
+        {
+            throw new FileNotFoundException($"文件不存在: {file1}");
+        }
+
+        if (!File.Exists(file2))
+        {
+            throw new FileNotFoundException($"文件不存在: {file2}");
+        }
 
         var info1 = new FileInfo(file1);
         var info2 = new FileInfo(file2);

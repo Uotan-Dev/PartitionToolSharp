@@ -13,15 +13,47 @@ public static class MetadataReader
 
     public static LpMetadata ReadFromImageStream(Stream stream)
     {
-        var buffer = new byte[MetadataFormat.LP_METADATA_GEOMETRY_SIZE];
-        stream.Seek(MetadataFormat.LP_PARTITION_RESERVED_BYTES, SeekOrigin.Begin);
-        if (stream.Read(buffer, 0, buffer.Length) != buffer.Length)
+        // 依次尝试可能的几何数据偏移：标准 (4096), 备份 (8192), 以及 0
+        long[] tryOffsets = [ MetadataFormat.LP_PARTITION_RESERVED_BYTES,
+                              MetadataFormat.LP_PARTITION_RESERVED_BYTES + MetadataFormat.LP_METADATA_GEOMETRY_SIZE,
+                              0 ];
+
+        foreach (var offset in tryOffsets)
         {
-            throw new InvalidDataException("无法读取逻辑分区几何数据 (Geometry)");
+            try
+            {
+                LpLogger.Info($"正在尝试从偏移量 {offset} 读取几何信息...");
+                var buffer = new byte[MetadataFormat.LP_METADATA_GEOMETRY_SIZE];
+                stream.Seek(offset, SeekOrigin.Begin);
+                if (stream.Read(buffer, 0, buffer.Length) == buffer.Length)
+                {
+                    ParseGeometry(buffer, out var geometry);
+                    // 找到有效的几何数据，读取主元数据槽位 0
+                    // 元数据通常位于几何数据块（主+备）之后
+                    // 如果 offset 是 4096 或 0，这是正确的。
+                    // 如果 offset 是 8192 (备份)，我们仍然应该从主元数据（基于主几何位置）读取？
+                    // 按照 liblp 逻辑，这取决于镜像的具体布局。这里简化为从该几何位置计算元数据。
+                    var metadataOffset = offset;
+                    if (offset == MetadataFormat.LP_PARTITION_RESERVED_BYTES + MetadataFormat.LP_METADATA_GEOMETRY_SIZE)
+                    {
+                        // 如果读到的是备份几何，主几何应该在前一个块
+                        metadataOffset -= MetadataFormat.LP_METADATA_GEOMETRY_SIZE;
+                    }
+
+                    stream.Seek(metadataOffset + (MetadataFormat.LP_METADATA_GEOMETRY_SIZE * 2), SeekOrigin.Begin);
+                    var metadata = ParseMetadata(geometry, stream);
+                    LpLogger.Info($"成功解析元数据: 分区数={metadata.Partitions.Count}, 组数={metadata.Groups.Count}");
+                    return metadata;
+                }
+            }
+            catch (Exception ex)
+            {
+                LpLogger.Warning($"偏移量 {offset} 解析失败: {ex.Message}");
+                continue;
+            }
         }
 
-        ParseGeometry(buffer, out var geometry);
-        return ParseMetadata(geometry, stream);
+        throw new InvalidDataException("无法找到有效的 LpMetadataGeometry。镜像可能不是 super 镜像或已损坏。");
     }
 
     public static unsafe void ParseGeometry(ReadOnlySpan<byte> buffer, out LpMetadataGeometry geometry)
@@ -36,12 +68,12 @@ public static class MetadataReader
 
         if (geometry.Magic != MetadataFormat.LP_METADATA_GEOMETRY_MAGIC)
         {
-            throw new InvalidDataException("无效的 LpMetadataGeometry 魔数");
+            throw new InvalidDataException($"无效的 LpMetadataGeometry 魔数: 0x{geometry.Magic:X8} (期望: 0x{MetadataFormat.LP_METADATA_GEOMETRY_MAGIC:X8})");
         }
 
-        if (geometry.StructSize > sizeof(LpMetadataGeometry))
+        if (geometry.StructSize > (uint)buffer.Length)
         {
-            throw new InvalidDataException("LpMetadataGeometry 结构大小错误");
+            throw new InvalidDataException($"LpMetadataGeometry 结构大小超出缓冲区: {geometry.StructSize} > {buffer.Length}");
         }
 
         // 验证校验和
@@ -72,9 +104,6 @@ public static class MetadataReader
 
     public static unsafe LpMetadata ParseMetadata(LpMetadataGeometry geometry, Stream stream)
     {
-        // 元数据位于主备份几何块之后
-        stream.Seek(MetadataFormat.LP_PARTITION_RESERVED_BYTES + (MetadataFormat.LP_METADATA_GEOMETRY_SIZE * 2), SeekOrigin.Begin);
-
         var headerBuffer = new byte[sizeof(LpMetadataHeader)];
         if (stream.Read(headerBuffer, 0, headerBuffer.Length) != headerBuffer.Length)
         {

@@ -51,6 +51,11 @@ rootCommand.SetHandler((superImage, useJson) =>
 
         sparseFile?.Dispose();
     }
+    catch (InvalidDataException ex) when (ex.Message.Contains("魔数") || ex.Message.Contains("Magic"))
+    {
+        Console.Error.WriteLine($"Error: {ex.Message}");
+        Console.Error.WriteLine("Hint: The image might be a sparse image that failed detection, or it might be raw metadata at an unsupported offset.");
+    }
     catch (Exception ex)
     {
         Console.Error.WriteLine($"Error: {ex.Message}");

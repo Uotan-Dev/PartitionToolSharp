@@ -71,8 +71,8 @@ public struct SparseHeader
     {
         return Magic == SparseFormat.SPARSE_HEADER_MAGIC &&
                MajorVersion == 1 &&
-               FileHeaderSize == SparseFormat.SPARSE_HEADER_SIZE &&
-               ChunkHeaderSize == SparseFormat.CHUNK_HEADER_SIZE &&
+               FileHeaderSize >= SparseFormat.SPARSE_HEADER_SIZE &&
+               ChunkHeaderSize >= SparseFormat.CHUNK_HEADER_SIZE &&
                BlockSize > 0 && BlockSize % 4 == 0;
     }
 }

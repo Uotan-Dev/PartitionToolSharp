@@ -1,0 +1,19 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:semi="https://irihi.tech/semi"
+             xmlns:u-semi="https://irihi.tech/ursa/themes/semi"
+             xmlns:conv="using:PartitionToolSharp.Desktop.Converters"
+             x:Class="PartitionToolSharp.Desktop.App"
+             RequestedThemeVariant="Default">
+             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are also available. -->
+
+    <Application.Resources>
+        <conv:BitwiseAndToBoolConverter x:Key="BitwiseAndToBoolConverter"/>
+    </Application.Resources>
+
+    <Application.Styles>
+        <semi:SemiTheme Locale="zh-CN" />
+        <u-semi:SemiTheme Locale="zh-CN" />
+        <StyleInclude Source="avares://Semi.Avalonia.DataGrid/Index.axaml" />
+    </Application.Styles>
+</Application>

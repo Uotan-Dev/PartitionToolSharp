@@ -117,10 +117,11 @@ return await rootCommand.InvokeAsync(args);
 ulong ParseSize(string size)
 {
     size = size.ToUpper().Trim();
-    if (size.EndsWith("K")) return ulong.Parse(size[..^1]) * 1024;
-    if (size.EndsWith("M")) return ulong.Parse(size[..^1]) * 1024 * 1024;
-    if (size.EndsWith("G")) return ulong.Parse(size[..^1]) * 1024 * 1024 * 1024;
-    return ulong.Parse(size);
+    return size.EndsWith("K")
+        ? ulong.Parse(size[..^1]) * 1024
+        : size.EndsWith("M")
+        ? ulong.Parse(size[..^1]) * 1024 * 1024
+        : size.EndsWith("G") ? ulong.Parse(size[..^1]) * 1024 * 1024 * 1024 : ulong.Parse(size);
 }
 
 uint ParseAttributes(string attr)

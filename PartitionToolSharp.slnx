@@ -4,6 +4,7 @@
   </Folder>
   <Project Path="LibLpSharp/LibLpSharp.csproj" />
   <Project Path="LibSpraseSharp/LibSpraseSharp.csproj" />
+  <Project Path="PartitionToolSharp.Desktop/PartitionToolSharp.Desktop.csproj" />
   <Project Path="LpDump/LpDump.csproj" />
   <Project Path="LpMake/LpMake.csproj" />
   <Project Path="LpUnpack/LpUnpack.csproj" />

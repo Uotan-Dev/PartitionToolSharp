@@ -1,0 +1,69 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PartitionToolSharp.Desktop.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:u="https://irihi.tech/ursa"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="PartitionToolSharp.Desktop.Views.PartitionManagerView"
+             x:DataType="vm:PartitionManagerViewModel">
+    
+    <Grid RowDefinitions="Auto, *, Auto">
+        <!-- Toolbar -->
+        <Border Grid.Row="0" Padding="10" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <u:IconButton Content="Open Metadata" Command="{Binding OpenFileCommand}" Classes="Primary"/>
+                <u:IconButton Content="Save Changes" Classes="Success"/>
+                <Separator/>
+                <u:IconButton Content="Add Partition" Classes="Warning"/>
+                <u:IconButton Content="Delete" Classes="Danger"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Main Workspace -->
+        <Grid Grid.Row="1" ColumnDefinitions="*, 300">
+            <!-- Partition List -->
+            <DataGrid Grid.Column="0" Margin="10" 
+                      ItemsSource="{Binding Partitions}"
+                      SelectedItem="{Binding SelectedPartition}"
+                      AutoGenerateColumns="False" 
+                      CanUserResizeColumns="True">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
+                    <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="*"/>
+                    <DataGridTextColumn Header="Size" Binding="{Binding SizeInMiB}" Width="*"/>
+                    <DataGridTextColumn Header="Flags" Binding="{Binding Attributes, StringFormat='X'}" Width="*"/>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <!-- Property Editor -->
+            <Border Grid.Column="1" Padding="15" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="1,0,0,0">
+                <StackPanel Spacing="10" DataContext="{Binding SelectedPartition}">
+                    <TextBlock Text="Partition Properties" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+                    
+                    <TextBlock Text="Name:"/>
+                    <TextBox Text="{Binding Name}" Watermark="system, vendor, etc."/>
+                    
+                    <TextBlock Text="Group:"/>
+                    <TextBox Text="{Binding Group}" IsReadOnly="True" Opacity="0.6"/>
+
+                    <TextBlock Text="Size (Bytes):"/>
+                    <u:NumericULongUpDown Value="{Binding Size}" Minimum="0" Step="4096"/>
+                    
+                    <CheckBox IsChecked="{Binding Attributes, Converter={StaticResource BitwiseAndToBoolConverter}, ConverterParameter=1, Mode=OneWay}" Content="Read-Only"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Capacity Map (Visualizer) -->
+        <Border Grid.Row="2" Height="80" Padding="10,5" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="0,1,0,0">
+            <StackPanel Spacing="5">
+                <Grid ColumnDefinitions="*, Auto">
+                    <TextBlock Grid.Column="0" Text="Super Partition Usage (Visualization)" FontSize="12" Foreground="{DynamicResource SemiGrey6}"/>
+                    <TextBlock Grid.Column="1" Text="{Binding StatusMessage}" FontSize="12" Foreground="{DynamicResource SemiBlue6}" FontWeight="SemiBold"/>
+                </Grid>
+                <ProgressBar Value="45" Minimum="0" Maximum="100" Height="20" ShowProgressText="True"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

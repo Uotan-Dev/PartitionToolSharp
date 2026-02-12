@@ -120,8 +120,20 @@ public class SparseFile : IDisposable
     /// <summary>
     /// 从文件流读取sparse文件
     /// </summary>
-    public static SparseFile FromStream(Stream stream)
+    public static SparseFile FromStream(Stream stream) => FromStreamInternal(stream, null);
+
+    /// <summary>
+    /// 从文件路径读取sparse文件（推荐，支持大型文件的按需读取）
+    /// </summary>
+    public static SparseFile FromImageFile(string filePath)
     {
+        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return FromStreamInternal(stream, filePath);
+    }
+
+    private static SparseFile FromStreamInternal(Stream stream, string? filePath)
+    {
+        SparseLogger.Info("正在解析 Sparse 文件头...");
         var sparseFile = new SparseFile();
         var headerData = new byte[SparseFormat.SPARSE_HEADER_SIZE];
         if (stream.Read(headerData, 0, headerData.Length) != headerData.Length)
@@ -135,8 +147,19 @@ public class SparseFile : IDisposable
         {
             throw new InvalidDataException("无效的 sparse 文件头");
         }
+
+        SparseLogger.Info($"Sparse 文件解析: 版本 {sparseFile.Header.MajorVersion}.{sparseFile.Header.MinorVersion}, " +
+                          $"Chunk 总数: {sparseFile.Header.TotalChunks}, 总块数: {sparseFile.Header.TotalBlocks}");
+
+        // 如果文件头比标准大小大，跳过额外部分
+        if (sparseFile.Header.FileHeaderSize > SparseFormat.SPARSE_HEADER_SIZE)
+        {
+            stream.Seek(sparseFile.Header.FileHeaderSize - SparseFormat.SPARSE_HEADER_SIZE, SeekOrigin.Current);
+        }
+
         for (uint i = 0; i < sparseFile.Header.TotalChunks; i++)
         {
+            if (i % 500 == 0 && i > 0) SparseLogger.Info($"正在加载第 {i}/{sparseFile.Header.TotalChunks} 个 Chunk...");
             var chunkHeaderData = new byte[SparseFormat.CHUNK_HEADER_SIZE];
             if (stream.Read(chunkHeaderData, 0, chunkHeaderData.Length) != chunkHeaderData.Length)
             {
@@ -144,6 +167,13 @@ public class SparseFile : IDisposable
             }
 
             var chunkHeader = ChunkHeader.FromBytes(chunkHeaderData);
+
+            // 如果 Chunk 头比标准大小大，跳过额外部分
+            if (sparseFile.Header.ChunkHeaderSize > SparseFormat.CHUNK_HEADER_SIZE)
+            {
+                stream.Seek(sparseFile.Header.ChunkHeaderSize - SparseFormat.CHUNK_HEADER_SIZE, SeekOrigin.Current);
+            }
+
             var chunk = new SparseChunk(chunkHeader);
 
             if (!chunkHeader.IsValid())
@@ -151,17 +181,31 @@ public class SparseFile : IDisposable
                 throw new InvalidDataException($"第 {i} 个 chunk 头无效");
             }
 
-            var dataSize = (int)(chunkHeader.TotalSize - SparseFormat.CHUNK_HEADER_SIZE);
+            var dataSize = (long)chunkHeader.TotalSize - SparseFormat.CHUNK_HEADER_SIZE;
 
             switch (chunkHeader.ChunkType)
             {
                 case SparseFormat.CHUNK_TYPE_RAW:
-                    var rawData = new byte[dataSize];
-                    if (stream.Read(rawData, 0, dataSize) != dataSize)
+                    if (filePath != null)
                     {
-                        throw new InvalidDataException($"无法读取第 {i} 个 chunk 的原始数据");
+                        // 使用 FileDataProvider 进行按需读取，不占用内存
+                        chunk.DataProvider = new FileDataProvider(filePath, stream.Position, dataSize);
+                        stream.Seek(dataSize, SeekOrigin.Current);
                     }
-                    chunk.DataProvider = new MemoryDataProvider(rawData);
+                    else
+                    {
+                        // 降级为内存读取
+                        if (dataSize > int.MaxValue)
+                        {
+                            throw new NotSupportedException($"第 {i} 个 chunk 的原始数据太大 ({dataSize} 字节)，超过了内存缓冲区限制。");
+                        }
+                        var rawData = new byte[dataSize];
+                        if (stream.Read(rawData, 0, (int)dataSize) != (int)dataSize)
+                        {
+                            throw new InvalidDataException($"无法读取第 {i} 个 chunk 的原始数据");
+                        }
+                        chunk.DataProvider = new MemoryDataProvider(rawData);
+                    }
                     break;
 
                 case SparseFormat.CHUNK_TYPE_FILL:

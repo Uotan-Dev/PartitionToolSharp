@@ -1,0 +1,62 @@
+<u:UrsaWindow xmlns="https://github.com/avaloniaui"
+              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+              xmlns:vm="using:PartitionToolSharp.Desktop.ViewModels"
+              xmlns:views="using:PartitionToolSharp.Desktop.Views"
+              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+              xmlns:u="https://irihi.tech/ursa"
+              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+              x:Class="PartitionToolSharp.Desktop.Views.MainWindow"
+              x:DataType="vm:MainViewModel"
+              Title="PartitionToolSharp.Desktop">
+
+    <Design.DataContext>
+        <!-- This only sets the DataContext for the previewer in an IDE,
+             to set the actual DataContext at runtime, set the DataContext property in code (look at App.axaml.cs) -->
+        <vm:MainViewModel/>
+    </Design.DataContext>
+
+    <u:UrsaWindow.TitleBarContent>
+        <TextBlock Text="PartitionToolSharp" VerticalAlignment="Center" Margin="8,0"/>
+    </u:UrsaWindow.TitleBarContent>
+
+    <Grid ColumnDefinitions="Auto, *">
+        <!-- Sidebar -->
+        <Border Grid.Column="0" Width="220" Padding="10" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="0,0,1,0">
+            <StackPanel Spacing="5">
+                <TextBlock Text="PartitionToolSharp" FontSize="18" FontWeight="Bold" Margin="10,20"/>
+                
+                <u:NavMenu ExpandWidth="220">
+                    <u:NavMenuItem Header="Dashboard" 
+                                   Command="{Binding NavigateCommand}" 
+                                   CommandParameter="Dashboard"/>
+                    <u:NavMenuItem Header="Partition Manager" 
+                                   Command="{Binding NavigateCommand}" 
+                                   CommandParameter="PartitionManager"/>
+                    <u:NavMenuItem Header="Flasher &amp; Images" 
+                                   Command="{Binding NavigateCommand}" 
+                                   CommandParameter="Flasher"/>
+                    <u:NavMenuItem Header="Settings" 
+                                   Command="{Binding NavigateCommand}" 
+                                   CommandParameter="Settings"/>
+                </u:NavMenu>
+            </StackPanel>
+        </Border>
+
+        <!-- Main Content -->
+        <Grid Grid.Column="1" RowDefinitions="Auto, *">
+            <ContentControl Grid.Row="1" Content="{Binding CurrentView}">
+                <ContentControl.DataTemplates>
+                    <DataTemplate DataType="vm:DashboardViewModel">
+                        <Border Padding="20">
+                            <TextBlock Text="Home Dashboard - Image Overview" FontSize="20"/>
+                        </Border>
+                    </DataTemplate>
+                    <DataTemplate DataType="vm:PartitionManagerViewModel">
+                        <views:PartitionManagerView/>
+                    </DataTemplate>
+                </ContentControl.DataTemplates>
+            </ContentControl>
+        </Grid>
+    </Grid>
+</u:UrsaWindow>
