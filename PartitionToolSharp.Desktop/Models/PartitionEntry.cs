@@ -12,9 +12,12 @@ public partial class PartitionEntry : ObservableObject
     private string _group = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SizeInMiB))]
     private ulong _size;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsReadOnly))]
+    [NotifyPropertyChangedFor(nameof(IsSlot))]
     private uint _attributes;
 
     public bool IsReadOnly
@@ -23,7 +26,7 @@ public partial class PartitionEntry : ObservableObject
         set
         {
             var newVal = value ? (Attributes | 1) : (Attributes & ~1u);
-            if (newVal != Attributes)
+            if (newVal != Attributes) 
             {
                 Attributes = newVal;
                 OnPropertyChanged(nameof(IsReadOnly));
@@ -37,7 +40,7 @@ public partial class PartitionEntry : ObservableObject
         set
         {
             var newVal = value ? (Attributes | 2) : (Attributes & ~2u);
-            if (newVal != Attributes)
+            if (newVal != Attributes) 
             {
                 Attributes = newVal;
                 OnPropertyChanged(nameof(IsSlot));
@@ -46,6 +49,7 @@ public partial class PartitionEntry : ObservableObject
     }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FileSystemSizeText))]
     private ulong _fileSystemSize;
 
     public string FileSystemSizeText => FileSystemSize > 0

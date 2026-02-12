@@ -111,13 +111,13 @@
                     <TextBlock Text="Partition Properties" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
                     
                     <TextBlock Text="Name:"/>
-                    <TextBox Text="{Binding Name}" Watermark="system, vendor, etc."/>
+                    <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Watermark="system, vendor, etc."/>
                     
                     <TextBlock Text="Group:"/>
                     <TextBox Text="{Binding Group}" IsReadOnly="True" Opacity="0.6"/>
 
                     <TextBlock Text="Size (Bytes):"/>
-                    <u:NumericULongUpDown Value="{Binding Size}" Minimum="0" Step="4096"/>
+                    <u:NumericULongUpDown Value="{Binding Size, UpdateSourceTrigger=PropertyChanged}" Minimum="0" Step="4096"/>
 
                     <StackPanel Spacing="2" Margin="0,5,0,0">
                          <TextBlock Text="Detected Filesystem Size:" Foreground="{DynamicResource SemiGrey6}" FontSize="12"/>
@@ -146,8 +146,8 @@
                          </Border>
                     </StackPanel>
                     
-                    <CheckBox IsChecked="{Binding IsReadOnly}" Content="Read-Only"/>
-                    <CheckBox IsChecked="{Binding IsSlot}" Content="Slot (A/B)"/>
+                    <CheckBox IsChecked="{Binding IsReadOnly, Mode=TwoWay}" Content="Read-Only"/>
+                    <CheckBox IsChecked="{Binding IsSlot, Mode=TwoWay}" Content="Slot (A/B)"/>
                 </StackPanel>
             </Border>
         </Grid>

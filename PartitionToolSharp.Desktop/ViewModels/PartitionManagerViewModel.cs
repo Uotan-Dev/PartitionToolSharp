@@ -12,6 +12,7 @@ using CommunityToolkit.Mvvm.Messaging;
 using LibLpSharp;
 using LibSparseSharp;
 using PartitionToolSharp.Desktop.Models;
+using PartitionToolSharp.Desktop.Services;
 
 namespace PartitionToolSharp.Desktop.ViewModels;
 
@@ -58,21 +59,27 @@ public partial class PartitionManagerViewModel : ObservableObject
         SparseLogger.LogMessage = msg => Dispatcher.UIThread.Post(() => StatusMessage = msg);
 
         Partitions.CollectionChanged += (s, e) => OnPropertyChanged(nameof(FilteredPartitions));
+
+        if (!string.IsNullOrEmpty(ConfigService.Current.LastOpenedFilePath) && File.Exists(ConfigService.Current.LastOpenedFilePath))
+        {
+            _ = LoadFileAsync(ConfigService.Current.LastOpenedFilePath);
+        }
     }
 
     private void OnMetadataChanged()
     {
         UpdateUsageStats();
-        if (!string.IsNullOrWhiteSpace(SearchText))
+        
+        // Notify UI that the filtered view needs refreshing
+        var current = SelectedPartition;
+        OnPropertyChanged(nameof(FilteredPartitions));
+        
+        // Restore selection if it was lost during collection refresh
+        if (current != null && SelectedPartition != current)
         {
-            var current = SelectedPartition;
-            OnPropertyChanged(nameof(FilteredPartitions));
-            if (current != null)
-            {
-                SelectedPartition = current;
-                OnPropertyChanged(nameof(SelectedPartition));
-            }
+            SelectedPartition = current;
         }
+
         WeakReferenceMessenger.Default.Send(new MetadataChangedMessage(_metadata, CurrentFilePath));
     }
 
@@ -129,54 +136,48 @@ public partial class PartitionManagerViewModel : ObservableObject
     }
 
     [RelayCommand(CanExecute = nameof(CanMoveUp))]
-    private async Task MovePartitionUp()
+    private void MovePartitionUp()
     {
-        if (SelectedPartition == null)
-        {
-            return;
-        }
+        if (SelectedPartition is not { } p) return;
 
-        var p = SelectedPartition;
         var index = Partitions.IndexOf(p);
         if (index > 0)
         {
-            Partitions.Move(index, index - 1);
-            OnMetadataChanged();
-
-            await Task.Yield();
+            Partitions.RemoveAt(index);
+            Partitions.Insert(index - 1, p);
+            
+            // Re-select the item after move
             SelectedPartition = p;
-
+            
+            OnMetadataChanged();
             RefreshCommandStates();
             StatusMessage = $"Moved {p.Name} up";
         }
     }
 
-    private bool CanMoveUp => SelectedPartition != null && Partitions.IndexOf(SelectedPartition) > 0;
+    private bool CanMoveUp => SelectedPartition != null && Partitions.Count > 1 && Partitions.IndexOf(SelectedPartition) > 0;
 
     [RelayCommand(CanExecute = nameof(CanMoveDown))]
-    private async Task MovePartitionDown()
+    private void MovePartitionDown()
     {
-        if (SelectedPartition == null)
-        {
-            return;
-        }
+        if (SelectedPartition is not { } p) return;
 
-        var p = SelectedPartition;
         var index = Partitions.IndexOf(p);
-        if (index < Partitions.Count - 1)
+        if (index >= 0 && index < Partitions.Count - 1)
         {
-            Partitions.Move(index, index + 1);
-            OnMetadataChanged();
+            Partitions.RemoveAt(index);
+            Partitions.Insert(index + 1, p);
 
-            await Task.Yield();
+            // Re-select the item after move
             SelectedPartition = p;
 
+            OnMetadataChanged();
             RefreshCommandStates();
             StatusMessage = $"Moved {p.Name} down";
         }
     }
 
-    private bool CanMoveDown => SelectedPartition != null && Partitions.IndexOf(SelectedPartition) < Partitions.Count - 1;
+    private bool CanMoveDown => SelectedPartition != null && Partitions.Count > 1 && Partitions.IndexOf(SelectedPartition) < Partitions.Count - 1;
 
     private void RefreshCommandStates()
     {
@@ -400,6 +401,10 @@ public partial class PartitionManagerViewModel : ObservableObject
             GC.WaitForPendingFinalizers();
 
             CurrentFilePath = path;
+            
+            // Save to config
+            ConfigService.Current.LastOpenedFilePath = path;
+            ConfigService.Save();
 
             _metadata = await Task.Run(() =>
             {
@@ -511,7 +516,7 @@ public partial class PartitionManagerViewModel : ObservableObject
                             if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
                             {
                                 var offset = extent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
-                                var fsSize = FilesystemChecker.DetectFilesystemSize(targetStream, offset);
+                                var fsSize = Utility.DetectFilesystemSize(targetStream!, offset);
 
                                 Dispatcher.UIThread.Post(() => entry.FileSystemSize = fsSize);
                             }

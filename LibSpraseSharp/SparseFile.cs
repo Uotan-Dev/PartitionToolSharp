@@ -284,11 +284,21 @@ public class SparseFile : IDisposable
                     {
                         if (includeCrc)
                         {
-                            using var ms = new MemoryStream();
-                            chunk.DataProvider.WriteTo(ms);
-                            var data = ms.ToArray();
-                            checksum = Crc32.Update(checksum, data);
-                            stream.Write(data, 0, data.Length);
+                            var buffer = new byte[1024 * 1024];
+                            long providerOffset = 0;
+                            while (providerOffset < chunk.DataProvider.Length)
+                            {
+                                var toRead = (int)Math.Min(buffer.Length, chunk.DataProvider.Length - providerOffset);
+                                var read = chunk.DataProvider.Read(providerOffset, buffer, 0, toRead);
+                                if (read <= 0)
+                                {
+                                    break;
+                                }
+
+                                stream.Write(buffer, 0, read);
+                                checksum = Crc32.Update(checksum, buffer, 0, read);
+                                providerOffset += read;
+                            }
                         }
                         else
                         {
@@ -309,17 +319,26 @@ public class SparseFile : IDisposable
                     break;
 
                 case SparseFormat.CHUNK_TYPE_FILL:
-                    var fillData = BitConverter.GetBytes(chunk.FillValue);
-                    stream.Write(fillData, 0, fillData.Length);
+                    var fillValData = BitConverter.GetBytes(chunk.FillValue);
+                    stream.Write(fillValData, 0, fillValData.Length);
                     if (includeCrc)
                     {
-                        // 对于 CRC 校验，Fill chunk 被视为多次重复的 4 字节值
                         var fillVal = chunk.FillValue;
                         var valBytes = BitConverter.GetBytes(fillVal);
                         var totalBytes = (long)chunk.Header.ChunkSize * Header.BlockSize;
-                        for (long i = 0; i < totalBytes; i += 4)
+
+                        var buffer = new byte[Math.Min(1024 * 1024, totalBytes)];
+                        for (var i = 0; i < buffer.Length; i += 4)
                         {
-                            checksum = Crc32.Update(checksum, valBytes);
+                            Array.Copy(valBytes, 0, buffer, i, 4);
+                        }
+
+                        long processed = 0;
+                        while (processed < totalBytes)
+                        {
+                            var toProcess = (int)Math.Min(buffer.Length, totalBytes - processed);
+                            checksum = Crc32.Update(checksum, buffer, 0, toProcess);
+                            processed += toProcess;
                         }
                     }
                     break;
@@ -327,9 +346,15 @@ public class SparseFile : IDisposable
                 case SparseFormat.CHUNK_TYPE_DONT_CARE:
                     if (includeCrc)
                     {
-                        // 在 libsparse 中，DontCare chunk 在计算 CRC 时被视为 0
-                        var zeros = new byte[chunk.Header.ChunkSize * Header.BlockSize];
-                        checksum = Crc32.Update(checksum, zeros);
+                        var totalBytes = (long)chunk.Header.ChunkSize * Header.BlockSize;
+                        var zeroBuf = new byte[Math.Min(1024 * 1024, totalBytes)];
+                        long processed = 0;
+                        while (processed < totalBytes)
+                        {
+                            var toProcess = (int)Math.Min(zeroBuf.Length, totalBytes - processed);
+                            checksum = Crc32.Update(checksum, zeroBuf, 0, toProcess);
+                            processed += toProcess;
+                        }
                     }
                     break;
 

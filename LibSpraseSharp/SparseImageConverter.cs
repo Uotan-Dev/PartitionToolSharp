@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using LibLpSharp;
 
 namespace LibSparseSharp;
@@ -17,17 +18,17 @@ public class SparseImageConverter
         long maxFileSize = 0;
         foreach (var inputFile in inputFiles)
         {
-            using var tempStream = new FileStream(inputFile, FileMode.Open, FileAccess.Read);
-            var tempSparseFile = SparseFile.FromStream(tempStream);
+            var tempSparseFile = SparseFile.FromImageFile(inputFile);
             var fileSize = (long)tempSparseFile.Header.TotalBlocks * tempSparseFile.Header.BlockSize;
             maxFileSize = Math.Max(maxFileSize, fileSize);
+            tempSparseFile.Dispose();
         }
         outputStream.SetLength(maxFileSize);
         foreach (var inputFile in inputFiles)
         {
-            using var inputStream = new FileStream(inputFile, FileMode.Open, FileAccess.Read);
-            var sparseFile = SparseFile.FromStream(inputStream);
+            var sparseFile = SparseFile.FromImageFile(inputFile);
             WriteRawImageFromSparse(sparseFile, outputStream);
+            sparseFile.Dispose();
         }
     }
 
@@ -247,105 +248,140 @@ public class SparseImageConverter
 
         using var fs = new FileStream(inputPath, FileMode.Open, FileAccess.Read);
         var buffer = new byte[blockSize];
-        long currentOffset = 0;
+        var totalLength = fi.Length;
+        long currentPos = 0;
+        long rawStart = -1;
 
-        while (currentOffset < fi.Length)
+        while (currentPos < totalLength)
         {
-            fs.Seek(currentOffset, SeekOrigin.Begin);
-            var bytesRead = fs.Read(buffer, 0, (int)blockSize);
+            fs.Position = currentPos;
+            var bytesRead = fs.Read(buffer, 0, (int)Math.Min(blockSize, totalLength - currentPos));
             if (bytesRead == 0)
             {
                 break;
             }
 
-            if (IsZeroBlock(buffer, bytesRead))
-            {
-                var startOffset = currentOffset;
-                currentOffset += bytesRead;
-                while (currentOffset < fi.Length)
-                {
-                    var innerRead = fs.Read(buffer, 0, (int)blockSize);
-                    if (innerRead > 0 && IsZeroBlock(buffer, innerRead))
-                    {
-                        currentOffset += innerRead;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-                sparseFile.AddDontCareChunk((uint)(currentOffset - startOffset));
-                continue;
-            }
+            uint fillValue = 0;
+            var isZero = IsZeroBlock(buffer, bytesRead);
+            var isFill = !isZero && bytesRead == blockSize && IsFillBlock(buffer, out fillValue);
 
-            if (bytesRead == blockSize && IsFillBlock(buffer, out var fillValue))
+            if (isZero || isFill)
             {
-                var startOffset = currentOffset;
-                currentOffset += bytesRead;
-                while (currentOffset < fi.Length)
+                if (rawStart != -1)
                 {
-                    var innerRead = fs.Read(buffer, 0, (int)blockSize);
-                    if (innerRead == blockSize && IsFillBlock(buffer, out var innerFill) && innerFill == fillValue)
-                    {
-                        currentOffset += innerRead;
-                    }
-                    else
-                    {
-                        break;
-                    }
+                    sparseFile.AddRawFileChunk(inputPath, rawStart, (uint)(currentPos - rawStart));
+                    rawStart = -1;
                 }
-                sparseFile.AddFillChunk(fillValue, (uint)(currentOffset - startOffset));
-                continue;
-            }
 
-            // 原始数据块，记录文件偏移而不是读取内容
-            sparseFile.AddRawFileChunk(inputPath, currentOffset, (uint)bytesRead);
-            currentOffset += bytesRead;
+                if (isZero)
+                {
+                    var zeroStart = currentPos;
+                    currentPos += bytesRead;
+                    while (currentPos < totalLength)
+                    {
+                        var innerRead = fs.Read(buffer, 0, (int)Math.Min(blockSize, totalLength - currentPos));
+                        if (innerRead > 0 && IsZeroBlock(buffer, innerRead))
+                        {
+                            currentPos += innerRead;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                    sparseFile.AddDontCareChunk((uint)(currentPos - zeroStart));
+                }
+                else
+                {
+                    var fillStart = currentPos;
+                    var currentFillValue = fillValue;
+                    currentPos += bytesRead;
+                    while (currentPos < totalLength)
+                    {
+                        var innerRead = fs.Read(buffer, 0, (int)Math.Min(blockSize, totalLength - currentPos));
+                        if (innerRead == blockSize && IsFillBlock(buffer, out var innerFill) && innerFill == currentFillValue)
+                        {
+                            currentPos += innerRead;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                    sparseFile.AddFillChunk(currentFillValue, (uint)(currentPos - fillStart));
+                }
+            }
+            else
+            {
+                if (rawStart == -1)
+                {
+                    rawStart = currentPos;
+                }
+
+                currentPos += bytesRead;
+            }
+        }
+
+        if (rawStart != -1)
+        {
+            sparseFile.AddRawFileChunk(inputPath, rawStart, (uint)(currentPos - rawStart));
         }
 
         return sparseFile;
     }
 
-    /// <summary>
-    /// 检查是否为全零块
-    /// </summary>
-    private static bool IsZeroBlock(byte[] buffer, int length) => buffer.Take(length).All(b => b == 0);
+    private static bool IsZeroBlock(byte[] buffer, int length)
+    {
+        if (length == 0)
+        {
+            return true;
+        }
 
-    /// <summary>
-    /// 检查是否为填充块（所有字节都相同）
-    /// </summary>
+        var span = buffer.AsSpan(0, length);
+        var ulongSpan = MemoryMarshal.Cast<byte, ulong>(span);
+        foreach (var v in ulongSpan)
+        {
+            if (v != 0)
+            {
+                return false;
+            }
+        }
+
+        for (var i = ulongSpan.Length * 8; i < length; i++)
+        {
+            if (buffer[i] != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static bool IsFillBlock(byte[] buffer, out uint fillValue)
     {
         fillValue = 0;
-
         if (buffer.Length < 4)
         {
             return false;
         }
 
         var pattern = BitConverter.ToUInt32(buffer, 0);
-
-        for (var i = 4; i < buffer.Length; i += 4)
+        var span = buffer.AsSpan();
+        var uintSpan = MemoryMarshal.Cast<byte, uint>(span);
+        foreach (var v in uintSpan)
         {
-            var remainingBytes = Math.Min(4, buffer.Length - i);
-            var currentPattern = 0u;
-
-            for (var j = 0; j < remainingBytes; j++)
-            {
-                currentPattern |= (uint)(buffer[i + j] << (j * 8));
-            }
-
-            if (remainingBytes == 4 && currentPattern != pattern)
+            if (v != pattern)
             {
                 return false;
             }
-            else if (remainingBytes < 4)
+        }
+
+        for (var i = uintSpan.Length * 4; i < buffer.Length; i++)
+        {
+            if (buffer[i] != (byte)(pattern >> (i % 4 * 8)))
             {
-                var expectedPattern = pattern & ((1u << (remainingBytes * 8)) - 1);
-                if (currentPattern != expectedPattern)
-                {
-                    return false;
-                }
+                return false;
             }
         }
 

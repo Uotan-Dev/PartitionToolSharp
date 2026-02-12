@@ -1,8 +1,10 @@
+using System.IO;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using PartitionToolSharp.Desktop.Models;
+using PartitionToolSharp.Desktop.Services;
 
 namespace PartitionToolSharp.Desktop.ViewModels;
 
@@ -20,6 +22,11 @@ public partial class MainViewModel : ObservableObject, IRecipient<OpenImageReque
     {
         CurrentView = _dashboardVM;
         WeakReferenceMessenger.Default.Register(this);
+
+        if (!string.IsNullOrEmpty(ConfigService.Current.LastOpenedFilePath) && File.Exists(ConfigService.Current.LastOpenedFilePath))
+        {
+            CurrentView = _partitionManagerVM;
+        }
     }
 
     public async void Receive(OpenImageRequestMessage message) => await OpenImageGlobalAsync();
