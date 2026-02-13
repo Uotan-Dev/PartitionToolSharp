@@ -44,6 +44,36 @@ public partial class PartitionManagerViewModel : ObservableObject
     [ObservableProperty]
     private string _usageText = "0% Used";
 
+    [ObservableProperty]
+    private ulong _imageSize;
+
+    partial void OnImageSizeChanged(ulong value) => OnPropertyChanged(nameof(DisplayImageSize));
+
+    public string[] SizeUnits => PartitionEntry.Units;
+
+    [ObservableProperty]
+    private string _imageSizeUnit = "MB";
+
+    public double DisplayImageSize
+    {
+        get => ImageSize / GetUnitFactor(ImageSizeUnit);
+        set
+        {
+            ImageSize = (ulong)(value * GetUnitFactor(ImageSizeUnit));
+            OnPropertyChanged(nameof(DisplayImageSize));
+        }
+    }
+
+    partial void OnImageSizeUnitChanged(string value) => OnPropertyChanged(nameof(DisplayImageSize));
+
+    private static double GetUnitFactor(string unit) => unit switch
+    {
+        "KB" => 1024.0,
+        "MB" => 1024.0 * 1024.0,
+        "GB" => 1024.0 * 1024.0 * 1024.0,
+        _ => 1.0
+    };
+
     public IEnumerable<PartitionEntry> FilteredPartitions => string.IsNullOrWhiteSpace(SearchText)
                 ? Partitions
                 : Partitions.Where(p => p.Name.Contains(SearchText, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -51,6 +81,7 @@ public partial class PartitionManagerViewModel : ObservableObject
     partial void OnSearchTextChanged(string value) => OnPropertyChanged(nameof(FilteredPartitions));
 
     private LpMetadata? _metadata;
+    private readonly List<LpMetadataExtent> _extentsToWipe = [];
 
     public PartitionManagerViewModel()
     {
@@ -67,22 +98,57 @@ public partial class PartitionManagerViewModel : ObservableObject
         }
     }
 
+    private MetadataBuilder GetUpdatedBuilder()
+    {
+        if (_metadata == null)
+        {
+            throw new InvalidOperationException("Metadata is not loaded.");
+        }
+
+        var builder = MetadataBuilder.FromMetadata(_metadata);
+
+        foreach (var p in Partitions)
+        {
+            var builderPart = builder.FindPartition(p.Name);
+            if (builderPart == null)
+            {
+                builder.AddPartition(p.Name, p.Group, p.Attributes);
+                builderPart = builder.FindPartition(p.Name);
+            }
+
+            if (builderPart != null)
+            {
+                builderPart.Attributes = p.Attributes;
+                builder.ResizePartition(builderPart, p.Size);
+            }
+        }
+
+        var uiNames = Partitions.Select(p => p.Name).ToList();
+        builder.ReorderPartitions(uiNames);
+        return builder;
+    }
+
     private void OnMetadataChanged()
     {
         UpdateUsageStats();
 
-        // Notify UI that the filtered view needs refreshing
         var current = SelectedPartition;
         OnPropertyChanged(nameof(FilteredPartitions));
 
-        // Restore selection if it was lost during collection refresh
         if (current != null && SelectedPartition != current)
         {
             SelectedPartition = current;
         }
 
         RefreshCommandStates();
-        WeakReferenceMessenger.Default.Send(new MetadataChangedMessage(_metadata, CurrentFilePath));
+
+        var message = new MetadataChangedMessage(_metadata, CurrentFilePath)
+        {
+            UsagePercentage = UsagePercentage,
+            UsageText = UsageText,
+            ImageSize = ImageSize
+        };
+        WeakReferenceMessenger.Default.Send(message);
     }
 
     private void UpdateUsageStats()
@@ -92,7 +158,7 @@ public partial class PartitionManagerViewModel : ObservableObject
             return;
         }
 
-        var totalSize = _metadata.BlockDevices[0].Size;
+        var totalSize = ImageSize > 0 ? ImageSize : _metadata.BlockDevices[0].Size;
         ulong usedSize = 0;
         foreach (var p in Partitions)
         {
@@ -100,7 +166,34 @@ public partial class PartitionManagerViewModel : ObservableObject
         }
 
         UsagePercentage = (double)usedSize / totalSize * 100;
-        UsageText = $"{UsagePercentage:F1}% Used ({usedSize / (1024 * 1024.0):F2} MiB / {totalSize / (1024 * 1024.0):F2} MiB)";
+        var totalSizeGb = totalSize / (1024 * 1024 * 1024.0);
+        var usedSizeGb = usedSize / (1024 * 1024 * 1024.0);
+        UsageText = $"{UsagePercentage:F1}% Used ({usedSizeGb:F2} GB / {totalSizeGb:F2} GB)";
+    }
+
+    [RelayCommand]
+    private async Task ResizeImageAsync()
+    {
+        if (_metadata == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var builder = GetUpdatedBuilder();
+            builder.ResizeBlockDevice(ImageSize);
+            _metadata = builder.Export();
+            OnMetadataChanged();
+            StatusMessage = $"镜像大小调整为: {ImageSize / (1024 * 1024.0):F2} MiB";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"调整失败: {ex.Message}";
+            await Ursa.Controls.MessageBox.ShowOverlayAsync(ex.Message, "调整失败");
+            // 回滚界面上的 ImageSize
+            ImageSize = _metadata.BlockDevices[0].Size;
+        }
     }
 
     [RelayCommand(CanExecute = nameof(HasSelection))]
@@ -111,10 +204,23 @@ public partial class PartitionManagerViewModel : ObservableObject
             return;
         }
 
+        var lpPart = _metadata?.Partitions.FirstOrDefault(p => p.GetName() == SelectedPartition.Name);
+        if (lpPart != null)
+        {
+            for (uint i = 0; i < lpPart.Value.NumExtents; i++)
+            {
+                var extent = _metadata!.Extents[(int)(lpPart.Value.FirstExtentIndex + i)];
+                if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
+                {
+                    _extentsToWipe.Add(extent);
+                }
+            }
+        }
+
         Partitions.Remove(SelectedPartition);
         SelectedPartition = null;
         OnMetadataChanged();
-        StatusMessage = "Partition removed from list (unsaved)";
+        StatusMessage = "Partition removed and marked for data wiping on save";
     }
 
     private bool HasSelection => SelectedPartition != null;
@@ -310,27 +416,7 @@ public partial class PartitionManagerViewModel : ObservableObject
         {
             StatusMessage = "Saving changes...";
 
-            var builder = MetadataBuilder.FromMetadata(_metadata);
-
-            foreach (var p in Partitions)
-            {
-                var builderPart = builder.FindPartition(p.Name);
-                if (builderPart == null)
-                {
-                    builder.AddPartition(p.Name, p.Group, p.Attributes);
-                    builderPart = builder.FindPartition(p.Name);
-                }
-
-                if (builderPart != null)
-                {
-                    builderPart.Attributes = p.Attributes;
-                    builder.ResizePartition(builderPart, p.Size);
-                }
-            }
-
-            var uiNames = Partitions.Select(p => p.Name).ToList();
-            builder.ReorderPartitions(uiNames);
-
+            var builder = GetUpdatedBuilder();
             var newMetadata = builder.Export();
 
             using (var fs = File.OpenRead(CurrentFilePath))
@@ -362,17 +448,53 @@ public partial class PartitionManagerViewModel : ObservableObject
                     Array.Copy(metadataData, paddedMetadata, Math.Min(metadataData.Length, paddedMetadata.Length));
                     fs.Write(paddedMetadata);
                 }
+
+                // 物理调整整个镜像文件的大小 (Realize physical file resize)
+                fs.SetLength((long)newMetadata.BlockDevices[0].Size);
+
+                // 擦除已删除分区的数据 (Wipe removed partition data)
+                if (_extentsToWipe.Count > 0)
+                {
+                    StatusMessage = "Wiping deleted partition data...";
+                    var zeroBuf = new byte[1024 * 1024];
+                    foreach (var extent in _extentsToWipe)
+                    {
+                        fs.Seek((long)extent.TargetData * 512, SeekOrigin.Begin);
+                        var remaining = (long)extent.NumSectors * 512;
+                        while (remaining > 0)
+                        {
+                            var toWrite = (int)Math.Min(zeroBuf.Length, remaining);
+                            fs.Write(zeroBuf, 0, toWrite);
+                            remaining -= toWrite;
+                        }
+                    }
+                    _extentsToWipe.Clear();
+                }
             }
 
             _metadata = newMetadata;
             StatusMessage = "Changes saved successfully to raw image.";
             await Ursa.Controls.MessageBox.ShowOverlayAsync("保存成功！", "提示");
+
+            await RefreshProbeAsync();
         }
         catch (Exception ex)
         {
             StatusMessage = $"Save Error: {ex.Message}";
             await Ursa.Controls.MessageBox.ShowOverlayAsync($"保存失败: {ex.Message}", "错误");
         }
+    }
+
+    [RelayCommand]
+    public async Task RefreshProbeAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentFilePath))
+        {
+            return;
+        }
+
+        StatusMessage = "正在重新探测文件系统...";
+        await ProbeFileSystemSizesAsync(CurrentFilePath);
     }
 
     [RelayCommand]
@@ -406,13 +528,13 @@ public partial class PartitionManagerViewModel : ObservableObject
         {
             Partitions.Clear();
             _metadata = null;
+            _extentsToWipe.Clear();
             RefreshCommandStates();
             GC.Collect();
             GC.WaitForPendingFinalizers();
 
             CurrentFilePath = path;
 
-            // Save to config
             ConfigService.Current.LastOpenedFilePath = path;
             ConfigService.Save();
 

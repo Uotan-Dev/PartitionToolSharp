@@ -10,7 +10,7 @@
     
     <!-- Native AOT Support -->
     <PublishAot>true</PublishAot>
-    <TrimMode>link</TrimMode>
+    <TrimMode>partial</TrimMode>
     <IsTrimmable>true</IsTrimmable>
     <StackTraceSupport>false</StackTraceSupport>
   </PropertyGroup>

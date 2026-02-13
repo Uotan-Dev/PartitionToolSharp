@@ -9,7 +9,6 @@ public static class MetadataWriter
         geometry.Magic = MetadataFormat.LP_METADATA_GEOMETRY_MAGIC;
         geometry.StructSize = (uint)sizeof(LpMetadataGeometry);
 
-        // 计算校验和之前先清零
         for (var i = 0; i < 32; i++)
         {
             geometry.Checksum[i] = 0;
@@ -34,7 +33,6 @@ public static class MetadataWriter
             }
         }
 
-        // 填充至 LP_METADATA_GEOMETRY_SIZE 大小
         var padded = new byte[MetadataFormat.LP_METADATA_GEOMETRY_SIZE];
         Array.Copy(blob, padded, blob.Length);
         return padded;

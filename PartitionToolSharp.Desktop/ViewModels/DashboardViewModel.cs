@@ -62,6 +62,21 @@ public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataC
             ConfigService.Save();
         }
         UpdateStats(message.Value);
+
+        if (message.UsagePercentage.HasValue)
+        {
+            UsagePercentage = message.UsagePercentage.Value;
+        }
+        if (message.UsageText != null)
+        {
+            UsageText = message.UsageText;
+        }
+
+        if (message.ImageSize.HasValue)
+        {
+            var totalSizeGb = message.ImageSize.Value / (1024 * 1024 * 1024.0);
+            DeviceSize = $"{totalSizeGb:F2} GB";
+        }
     }
 
     [RelayCommand]
@@ -69,13 +84,6 @@ public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataC
 
     [RelayCommand]
     private void OpenRecentFile(string path) => WeakReferenceMessenger.Default.Send(new OpenImageRequestMessage(path));
-
-    public class GroupInfo
-    {
-        public string Name { get; set; } = "";
-        public string SizeText { get; set; } = "";
-        public string FlagsText { get; set; } = "";
-    }
 
     public void UpdateStats(LpMetadata? metadata)
     {
@@ -96,11 +104,11 @@ public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataC
         }
 
         var totalSize = metadata.BlockDevices[0].Size;
-        DeviceSize = $"{totalSize / (1024 * 1024 * 1024.0):F2} GB";
+        var totalSizeGb = totalSize / (1024 * 1024 * 1024.0);
+        DeviceSize = $"{totalSizeGb:F2} GB";
         SlotCount = metadata.Geometry.MetadataSlotCount.ToString();
         MetadataSize = $"{metadata.Geometry.MetadataMaxSize / 1024.0:F0} KB";
 
-        // Calculate usage: sum of all extents used by partitions
         ulong usedSectors = 0;
         foreach (var extent in metadata.Extents)
         {
@@ -111,7 +119,15 @@ public partial class DashboardViewModel : ObservableObject, IRecipient<MetadataC
         }
 
         var usedBytes = usedSectors * 512;
+        var usedBytesGb = usedBytes / (1024 * 1024 * 1024.0);
         UsagePercentage = (double)usedBytes / totalSize * 100;
-        UsageText = $"{UsagePercentage:F1}% Used ({usedBytes / (1024 * 1024 * 1024.0):F2} GB / {DeviceSize})";
+        UsageText = $"{UsagePercentage:F1}% Used ({usedBytesGb:F2} GB / {DeviceSize})";
     }
+}
+
+public class GroupInfo
+{
+    public string Name { get; set; } = "";
+    public string SizeText { get; set; } = "";
+    public string FlagsText { get; set; } = "";
 }

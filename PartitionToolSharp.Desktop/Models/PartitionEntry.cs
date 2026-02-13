@@ -56,26 +56,44 @@ public partial class PartitionEntry : ObservableObject
     [NotifyPropertyChangedFor(nameof(FileSystemSizeText))]
     private string _fileSystemType = "Unknown";
 
-    public string FileSystemSizeText
-    {
-        get
-        {
-            if (FileSystemType == "Unknown") return "Unformatted";
-            if (FileSystemType == "Raw") return "No FS Header";
-
-            if (FileSystemSize > 0)
-            {
-                return $"({FileSystemSize / (1024 * 1024.0):F2} MiB)";
-            }
-            return string.Empty;
-        }
-    }
+    public string FileSystemSizeText => FileSystemType == "Unknown"
+                ? "Unformatted"
+                : FileSystemType == "Raw" ? "No FS Header" : FileSystemSize > 0 ? $"({FileSystemSize / (1024 * 1024.0):F2} MiB)" : string.Empty;
 
     public Action? OnChanged { get; set; }
 
-    partial void OnSizeChanged(ulong value) => OnChanged?.Invoke();
+    partial void OnSizeChanged(ulong value)
+    {
+        OnChanged?.Invoke();
+        OnPropertyChanged(nameof(DisplaySize));
+    }
     partial void OnNameChanged(string value) => OnChanged?.Invoke();
     partial void OnAttributesChanged(uint value) => OnChanged?.Invoke();
 
     public string SizeInMiB => $"{Size / (1024 * 1024.0):F2} MiB";
+
+    public static readonly string[] Units = ["B", "KB", "MB", "GB"];
+
+    [ObservableProperty]
+    private string _selectedSizeUnit = "MB";
+
+    public double DisplaySize
+    {
+        get => Size / GetUnitFactor(SelectedSizeUnit);
+        set
+        {
+            Size = (ulong)(value * GetUnitFactor(SelectedSizeUnit));
+            OnPropertyChanged(nameof(DisplaySize));
+        }
+    }
+
+    partial void OnSelectedSizeUnitChanged(string value) => OnPropertyChanged(nameof(DisplaySize));
+
+    private static double GetUnitFactor(string unit) => unit switch
+    {
+        "KB" => 1024.0,
+        "MB" => 1024.0 * 1024.0,
+        "GB" => 1024.0 * 1024.0 * 1024.0,
+        _ => 1.0
+    };
 }

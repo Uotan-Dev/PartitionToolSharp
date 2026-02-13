@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:PartitionToolSharp.Desktop.ViewModels"
+             xmlns:models="using:PartitionToolSharp.Desktop.Models"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:u="https://irihi.tech/ursa"
@@ -10,7 +11,6 @@
              x:DataType="vm:PartitionManagerViewModel">
     
     <Grid RowDefinitions="Auto, *, Auto">
-        <!-- Toolbar -->
         <Border Grid.Row="0" Padding="10" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="*, Auto">
                 <StackPanel Orientation="Horizontal" Spacing="10" Background="Transparent">
@@ -20,12 +20,20 @@
                     <Button Content="Save" Command="{Binding SaveChangesCommand}" 
                             Classes="Success" Theme="{DynamicResource SolidButton}"
                             HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+                    <Button Content="Refresh" Command="{Binding RefreshProbeCommand}" 
+                            ToolTip.Tip="Reload File System Sizes from Disk"
+                            Theme="{DynamicResource BorderlessButton}"
+                            HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
                     <Separator Classes="Vertical"/>
                     <Button Content="Add" Command="{Binding AddNewPartitionCommand}" 
                             Classes="Warning" Theme="{DynamicResource SolidButton}"
                             HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
                     <Button Content="Delete" Command="{Binding DeleteSelectedPartitionCommand}" 
                             Classes="Danger" Theme="{DynamicResource SolidButton}"
+                            HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+                    <Separator Classes="Vertical"/>
+                    <Button Content="Resize Image" Command="{Binding ResizeImageCommand}" 
+                            Classes="Basic"
                             HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
                     <Separator Classes="Vertical"/>
                     <Button Content="↑" Command="{Binding MovePartitionUpCommand}" ToolTip.Tip="Move Up"
@@ -48,9 +56,7 @@
             </Grid>
         </Border>
 
-        <!-- Main Workspace -->
         <Grid Grid.Row="1" ColumnDefinitions="*, 300">
-            <!-- Partition List -->
             <DataGrid Grid.Column="0" Margin="10" 
                       ItemsSource="{Binding FilteredPartitions}"
                       SelectedItem="{Binding SelectedPartition}"
@@ -72,7 +78,7 @@
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="Stat" Width="50">
                         <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
+                            <DataTemplate x:DataType="models:PartitionEntry">
                                 <Panel>
                                     <Ellipse Width="10" Height="10" Fill="{DynamicResource SemiRed6}">
                                         <Ellipse.IsVisible>
@@ -96,7 +102,7 @@
                     <DataGridTextColumn Header="Size" Binding="{Binding SizeInMiB}" Width="*"/>
                     <DataGridTemplateColumn Header="Attributes" Width="Auto">
                         <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate>
+                            <DataTemplate x:DataType="models:PartitionEntry">
                                 <StackPanel Orientation="Horizontal" Spacing="5">
                                     <Border Background="{DynamicResource SemiRed2}" IsVisible="{Binding Attributes, Converter={StaticResource BitwiseAndToBoolConverter}, ConverterParameter=1, Mode=OneWay}" Padding="4,1" CornerRadius="4">
                                         <TextBlock Text="RO" FontSize="10" Foreground="{DynamicResource SemiRed7}"/>
@@ -111,59 +117,83 @@
                 </DataGrid.Columns>
             </DataGrid>
 
-            <!-- Property Editor -->
-            <Border Grid.Column="1" Padding="15" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="1,0,0,0">
-                <StackPanel Spacing="10" DataContext="{Binding SelectedPartition}">
-                    <TextBlock Text="Partition Properties" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
-                    
-                    <TextBlock Text="Name:"/>
-                    <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Watermark="system, vendor, etc."/>
-                    
-                    <TextBlock Text="Group:"/>
-                    <TextBox Text="{Binding Group}" IsReadOnly="True" Opacity="0.6"/>
+            <ScrollViewer Grid.Column="1" Padding="15" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="1,0,0,0">
+                <StackPanel Spacing="20">
+                    <Border Classes="Card" Padding="10" Background="{DynamicResource SemiGrey2}" CornerRadius="8">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Image Properties" FontSize="16" FontWeight="Bold"/>
+                            <TextBlock Text="Total Capacity:" FontSize="12"/>
+                            <Grid ColumnDefinitions="*, 80">
+                                <NumericUpDown Value="{Binding DisplayImageSize}" Minimum="0"/>
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding SizeUnits}" SelectedItem="{Binding ImageSizeUnit}" Margin="5,0,0,0"/>
+                            </Grid>
+                            <Button Content="Apply Resize" Command="{Binding ResizeImageCommand}" 
+                                    HorizontalAlignment="Stretch" Classes="Primary"/>
+                        </StackPanel>
+                    </Border>
 
-                    <TextBlock Text="Size (Bytes):"/>
-                    <u:NumericULongUpDown Value="{Binding Size, UpdateSourceTrigger=PropertyChanged}" Minimum="0" Step="4096"/>
+                    <StackPanel Spacing="10" DataContext="{Binding SelectedPartition}" x:DataType="models:PartitionEntry" IsVisible="{Binding $parent[UserControl].((vm:PartitionManagerViewModel)DataContext).SelectedPartition, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <TextBlock Text="Partition Properties" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+                        
+                        <TextBlock Text="Name:"/>
+                        <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Watermark="system, vendor, etc."/>
+                        
+                        <TextBlock Text="Group:"/>
+                        <TextBox Text="{Binding Group}" IsReadOnly="True" Opacity="0.6"/>
 
-                    <StackPanel Spacing="5" Margin="0,5,0,0">
-                         <TextBlock Text="Filesystem Detection:" Foreground="{DynamicResource SemiGrey6}" FontSize="12"/>
-                         <StackPanel Orientation="Horizontal" Spacing="8">
-                             <Border Background="{DynamicResource SemiBlue1}" BorderBrush="{DynamicResource SemiBlue3}" BorderThickness="1" CornerRadius="4" Padding="6,2">
-                                 <TextBlock Text="{Binding FileSystemType}" Foreground="{DynamicResource SemiBlue6}" FontWeight="Bold" FontSize="12"/>
-                             </Border>
-                             <TextBlock Text="{Binding FileSystemSizeText}" Foreground="{DynamicResource SemiGrey6}" VerticalAlignment="Center" FontSize="12"/>
-                         </StackPanel>
-                         
-                         <Border Background="{DynamicResource SemiRed1}" 
-                                 BorderBrush="{DynamicResource SemiRed3}" 
-                                 BorderThickness="1" 
-                                 Padding="8,5" 
-                                 CornerRadius="4" 
-                                 Margin="0,5,0,0">
-                             <Border.IsVisible>
-                                 <MultiBinding Converter="{x:Static conv:NumericLessThanConverter.Instance}">
-                                     <Binding Path="Size"/>
-                                     <Binding Path="FileSystemSize"/>
-                                 </MultiBinding>
-                             </Border.IsVisible>
-                             <StackPanel Orientation="Horizontal" Spacing="5">
-                                 <TextBlock Text="⚠️" Foreground="{DynamicResource SemiRed6}"/>
-                                 <TextBlock Text="Size too small for FS!" 
-                                            Foreground="{DynamicResource SemiRed6}" 
-                                            FontSize="11" 
-                                            VerticalAlignment="Center"
-                                            FontWeight="Bold"/>
+                        <TextBlock Text="Size:"/>
+                        <Grid ColumnDefinitions="*, 80">
+                            <NumericUpDown Value="{Binding DisplaySize}" Minimum="0"/>
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding $parent[UserControl].((vm:PartitionManagerViewModel)DataContext).SizeUnits}" SelectedItem="{Binding SelectedSizeUnit}" Margin="5,0,0,0"/>
+                        </Grid>
+
+                        <StackPanel Spacing="5" Margin="0,5,0,0">
+                             <TextBlock Text="Filesystem Detection:" Foreground="{DynamicResource SemiGrey6}" FontSize="12"/>
+                             <StackPanel Orientation="Horizontal" Spacing="8">
+                                 <Border Background="{DynamicResource SemiBlue1}" BorderBrush="{DynamicResource SemiBlue3}" BorderThickness="1" CornerRadius="4" Padding="6,2">
+                                     <TextBlock Text="{Binding FileSystemType}" Foreground="{DynamicResource SemiBlue6}" FontWeight="Bold" FontSize="12"/>
+                                 </Border>
+                                 <TextBlock Text="{Binding FileSystemSizeText}" Foreground="{DynamicResource SemiGrey6}" VerticalAlignment="Center" FontSize="12"/>
                              </StackPanel>
-                         </Border>
+                             
+                             <Border Background="{DynamicResource SemiRed1}" 
+                                     BorderBrush="{DynamicResource SemiRed3}" 
+                                     BorderThickness="1" 
+                                     Padding="8,5" 
+                                     CornerRadius="4" 
+                                     Margin="0,5,0,0">
+                                 <Border.IsVisible>
+                                     <MultiBinding Converter="{x:Static conv:NumericLessThanConverter.Instance}">
+                                         <Binding Path="Size"/>
+                                         <Binding Path="FileSystemSize"/>
+                                     </MultiBinding>
+                                 </Border.IsVisible>
+                                 <StackPanel Orientation="Horizontal" Spacing="5">
+                                     <TextBlock Text="⚠️" Foreground="{DynamicResource SemiRed6}"/>
+                                     <TextBlock Text="Size too small for FS!" 
+                                                Foreground="{DynamicResource SemiRed6}" 
+                                                FontSize="11" 
+                                                VerticalAlignment="Center"
+                                                FontWeight="Bold"/>
+                                 </StackPanel>
+                             </Border>
+                        </StackPanel>
+                        
+                        <CheckBox IsChecked="{Binding IsReadOnly, Mode=TwoWay}" Content="Read-Only"/>
+                        <CheckBox IsChecked="{Binding IsSlot, Mode=TwoWay}" Content="Slot (A/B)"/>
                     </StackPanel>
                     
-                    <CheckBox IsChecked="{Binding IsReadOnly, Mode=TwoWay}" Content="Read-Only"/>
-                    <CheckBox IsChecked="{Binding IsSlot, Mode=TwoWay}" Content="Slot (A/B)"/>
+                    <TextBlock Text="Select a partition to edit its properties." 
+                               Foreground="{DynamicResource SemiGrey6}" 
+                               IsVisible="{Binding SelectedPartition, Converter={x:Static ObjectConverters.IsNull}}"
+                               FontStyle="Italic"
+                               TextWrapping="Wrap"
+                               HorizontalAlignment="Center"
+                               Margin="0,20"/>
                 </StackPanel>
-            </Border>
+            </ScrollViewer>
         </Grid>
 
-        <!-- Capacity Map (Visualizer) -->
         <Border Grid.Row="2" Height="80" Padding="10,5" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="0,1,0,0">
             <StackPanel Spacing="5">
                 <Grid ColumnDefinitions="*, Auto">

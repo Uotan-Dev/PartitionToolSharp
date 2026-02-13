@@ -75,10 +75,9 @@ public class MetadataBuilder
             StructSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<LpMetadataGeometry>(),
             MetadataMaxSize = metadataMaxSize,
             MetadataSlotCount = metadataSlotCount,
-            LogicalBlockSize = 4096 // 默认为 4KB
+            LogicalBlockSize = 4096
         };
 
-        // 添加默认块设备
         var super = new LpMetadataBlockDevice
         {
             Alignment = 4096,
@@ -150,6 +149,37 @@ public class MetadataBuilder
     }
 
     public Partition? FindPartition(string name) => _partitions.FirstOrDefault(p => p.Name == name);
+
+    public void ResizeBlockDevice(ulong newSize)
+    {
+        if (_blockDevices.Count == 0)
+        {
+            return;
+        }
+
+        // 验证新大小是否足够容纳现有的所有 extent
+        var maxSectorUsed = _blockDevices[0].FirstLogicalSector;
+        foreach (var p in _partitions)
+        {
+            foreach (var extent in p.Extents)
+            {
+                if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
+                {
+                    maxSectorUsed = Math.Max(maxSectorUsed, extent.TargetData + extent.NumSectors);
+                }
+            }
+        }
+
+        var minRequiredSize = maxSectorUsed * MetadataFormat.LP_SECTOR_SIZE;
+        if (newSize < minRequiredSize)
+        {
+            throw new InvalidOperationException($"无法调整镜像大小：新容量 ({newSize / (1024 * 1024.0):F2} MiB) 小于分区占用的最小空间 ({minRequiredSize / (1024 * 1024.0):F2} MiB)");
+        }
+
+        var device = _blockDevices[0];
+        device.Size = newSize;
+        _blockDevices[0] = device;
+    }
 
     public void ResizePartition(Partition partition, ulong requestedSize)
     {
