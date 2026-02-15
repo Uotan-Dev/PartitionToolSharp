@@ -105,7 +105,7 @@ void DumpText(LpMetadata metadata, Stream inputStream)
             var firstExtent = metadata.Extents[(int)part.FirstExtentIndex];
             if (firstExtent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
             {
-                var offset = (ulong)firstExtent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
+                var offset = firstExtent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
                 var fsInfo = Utility.DetectFilesystem(inputStream, offset);
                 Console.WriteLine("  Filesystem: {0}", fsInfo.Type);
                 if (fsInfo.Size > 0)

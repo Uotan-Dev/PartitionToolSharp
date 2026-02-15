@@ -65,7 +65,7 @@ public static class Utility
                 return new FilesystemInfo
                 {
                     Type = "EROFS",
-                    Size = (ulong)blocks << (int)log2_blksz
+                    Size = (ulong)blocks << log2_blksz
                 };
             }
 

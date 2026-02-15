@@ -12,14 +12,9 @@ public partial class SettingsViewModel : ObservableObject
 
     public SettingsViewModel()
     {
-        if (ConfigService.Current.Theme == "System")
-        {
-            _useDarkTheme = Application.Current?.ActualThemeVariant == ThemeVariant.Dark;
-        }
-        else
-        {
-            _useDarkTheme = ConfigService.Current.Theme == "Dark";
-        }
+        _useDarkTheme = ConfigService.Current.Theme == "System"
+            ? Application.Current?.ActualThemeVariant == ThemeVariant.Dark
+            : ConfigService.Current.Theme == "Dark";
     }
 
     partial void OnUseDarkThemeChanged(bool value)

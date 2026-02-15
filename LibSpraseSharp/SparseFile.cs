@@ -660,12 +660,8 @@ public class SparseFile : IDisposable
             var subChunk = new SparseChunk(subHeader);
             if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW && chunk.DataProvider != null)
             {
-                // 注意：FileDataProvider 通过偏移量原生支持子范围
                 if (chunk.DataProvider is FileDataProvider)
                 {
-                    // 这里由于需要原始文件路径，逻辑尚未完整实现
-                    // 暂且假设在不拷贝的情况下无法轻易拆分 MemoryDataProvider
-                    // 目前仅作逻辑演示
                 }
             }
 
@@ -681,5 +677,89 @@ public class SparseFile : IDisposable
         var currentSize = SparseFormat.SPARSE_HEADER_SIZE + file.Chunks.Sum(c => c.Header.TotalSize);
         var available = maxFileSize - currentSize - SparseFormat.CHUNK_HEADER_SIZE;
         return available <= 0 ? 0 : (uint)(available / Header.BlockSize);
+    }
+
+    /// <summary>
+    /// 获取区块映射流
+    /// </summary>
+    public Stream GetExportStream(uint startBlock, uint blockCount, bool includeCrc = false) => new SparseImageStream(this, startBlock, blockCount, includeCrc);
+
+    /// <summary>
+    /// 分割 SparseFile 为多个指定大小的流
+    /// </summary>
+    public IEnumerable<Stream> GetResparsedStreams(long maxFileSize, bool includeCrc = false)
+    {
+        if (maxFileSize <= SparseFormat.SPARSE_HEADER_SIZE + SparseFormat.CHUNK_HEADER_SIZE + (includeCrc ? SparseFormat.CHUNK_HEADER_SIZE + 4 : 0))
+        {
+            throw new ArgumentException("maxFileSize 太小，无法容纳基本的 Sparse 结构");
+        }
+
+        uint currentBlock = 0;
+        var totalBlocks = Header.TotalBlocks;
+
+        while (currentBlock < totalBlocks)
+        {
+            var startBlock = currentBlock;
+            var currentSparseSize = SparseFormat.SPARSE_HEADER_SIZE + (includeCrc ? (long)SparseFormat.CHUNK_HEADER_SIZE + 4 : 0);
+            uint blocksToInclude = 0;
+
+            uint chunkBaseBlock = 0;
+            foreach (var chunk in Chunks)
+            {
+                var chunkEndBlock = chunkBaseBlock + chunk.Header.ChunkSize;
+
+                if (chunkEndBlock <= currentBlock)
+                {
+                    chunkBaseBlock = chunkEndBlock;
+                    continue;
+                }
+
+                var offsetInChunk = currentBlock - chunkBaseBlock;
+                var remainingInChunk = chunk.Header.ChunkSize - offsetInChunk;
+
+                long headerSize = SparseFormat.CHUNK_HEADER_SIZE;
+                long dataSizePerBlock = 0;
+                long fixedDataSize = 0;
+
+                if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
+                {
+                    dataSizePerBlock = Header.BlockSize;
+                }
+                else if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_FILL)
+                {
+                    fixedDataSize = 4;
+                }
+
+                if (currentSparseSize + headerSize + fixedDataSize + (remainingInChunk * dataSizePerBlock) <= maxFileSize)
+                {
+                    currentSparseSize += headerSize + fixedDataSize + (remainingInChunk * dataSizePerBlock);
+                    blocksToInclude += remainingInChunk;
+                    currentBlock += remainingInChunk;
+                }
+                else
+                {
+                    if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
+                    {
+                        var available = maxFileSize - currentSparseSize - headerSize;
+                        var canTake = (uint)(available / Header.BlockSize);
+                        if (canTake > 0)
+                        {
+                            blocksToInclude += canTake;
+                            currentBlock += canTake;
+                        }
+                    }
+                    break;
+                }
+
+                chunkBaseBlock = chunkEndBlock;
+            }
+
+            if (blocksToInclude == 0)
+            {
+                break;
+            }
+
+            yield return GetExportStream(startBlock, blocksToInclude, includeCrc);
+        }
     }
 }
