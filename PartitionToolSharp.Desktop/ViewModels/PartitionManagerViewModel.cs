@@ -345,7 +345,7 @@ public partial class PartitionManagerViewModel : ObservableObject
                 var magic = new byte[4];
                 sourceFs.ReadExactly(magic, 0, 4);
                 sourceFs.Seek(0, SeekOrigin.Begin);
-                if (BitConverter.ToUInt32(magic, 0) == SparseFormat.SPARSE_HEADER_MAGIC)
+                if (BitConverter.ToUInt32(magic, 0) == SparseFormat.SparseHeaderMagic)
                 {
                     sparse = SparseFile.FromImageFile(CurrentFilePath);
                     input = new SparseStream(sparse);
@@ -423,7 +423,7 @@ public partial class PartitionManagerViewModel : ObservableObject
             {
                 var magicBuf = new byte[4];
                 fs.ReadExactly(magicBuf, 0, 4);
-                if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SPARSE_HEADER_MAGIC)
+                if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SparseHeaderMagic)
                 {
                     await Ursa.Controls.MessageBox.ShowOverlayAsync("当前版本不支持直接写回 Sparse 镜像，请先转换为 Raw 格式。", "不支持的操作");
                     return;
@@ -545,7 +545,7 @@ public partial class PartitionManagerViewModel : ObservableObject
                 var isSparse = false;
                 if (fs.Read(magicBuf, 0, 4) == 4)
                 {
-                    if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SPARSE_HEADER_MAGIC)
+                    if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SparseHeaderMagic)
                     {
                         isSparse = true;
                     }
@@ -629,7 +629,7 @@ public partial class PartitionManagerViewModel : ObservableObject
                 fs.ReadExactly(magicBuf, 0, 4);
                 fs.Seek(0, SeekOrigin.Begin);
 
-                if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SPARSE_HEADER_MAGIC)
+                if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SparseHeaderMagic)
                 {
                     sparseFile = SparseFile.FromImageFile(path);
                     targetStream = new SparseStream(sparseFile);
@@ -693,7 +693,7 @@ public partial class PartitionManagerViewModel : ObservableObject
         fs.ReadExactly(magic, 0, 4);
         fs.Seek(0, SeekOrigin.Begin);
 
-        if (BitConverter.ToUInt32(magic, 0) == SparseFormat.SPARSE_HEADER_MAGIC)
+        if (BitConverter.ToUInt32(magic, 0) == SparseFormat.SparseHeaderMagic)
         {
             var sparse = SparseFile.FromImageFile(CurrentFilePath);
             disposables.Add(sparse);

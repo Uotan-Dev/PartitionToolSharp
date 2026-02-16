@@ -36,23 +36,23 @@ public class SparseFuzzerTests
     {
         var header = new SparseHeader
         {
-            Magic = SparseFormat.SPARSE_HEADER_MAGIC,
+            Magic = SparseFormat.SparseHeaderMagic,
             MajorVersion = 1,
             MinorVersion = 0,
-            FileHeaderSize = SparseFormat.SPARSE_HEADER_SIZE,
-            ChunkHeaderSize = SparseFormat.CHUNK_HEADER_SIZE,
+            FileHeaderSize = SparseFormat.SparseHeaderSize,
+            ChunkHeaderSize = SparseFormat.ChunkHeaderSize,
             BlockSize = 4096,
-            TotalBlocks = 1,
+            TotalBlocks = 100,
             TotalChunks = 1,
             ImageChecksum = 0
         };
 
         var chunkHeader = new ChunkHeader
         {
-            ChunkType = SparseFormat.CHUNK_TYPE_FILL,
+            ChunkType = SparseFormat.ChunkTypeFill,
             Reserved = 0,
-            ChunkSize = 1,
-            TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4
+            ChunkSize = 10,
+            TotalSize = SparseFormat.ChunkHeaderSize + 4
         };
 
         using var ms = new MemoryStream();
@@ -85,7 +85,7 @@ public class SparseFuzzerTests
     public void TestSparseFuzzer_WithCorruptedHeader()
     {
         var data = new byte[4];
-        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(data, SparseFormat.SPARSE_HEADER_MAGIC);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(data, SparseFormat.SparseHeaderMagic);
         var exception = Record.Exception(() => RunSmokeTest(data));
         Assert.Null(exception); // 不应崩溃
     }

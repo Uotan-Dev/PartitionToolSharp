@@ -3,13 +3,13 @@ using LibLpSharp;
 namespace LibSparseSharp;
 
 /// <summary>
-/// Sparse 镜像转换器
+/// Sparse image converter
 /// </summary>
-public class SparseImageConverter
+public static class SparseImageConverter
 {
 
     /// <summary>
-    /// 将sparse镜像转换为原始镜像
+    /// Converts sparse images to raw images
     /// </summary>
     public static void ConvertSparseToRaw(string[] inputFiles, string outputFile)
     {
@@ -33,7 +33,7 @@ public class SparseImageConverter
     }
 
     /// <summary>
-    /// 将原始镜像转换为sparse镜像
+    /// Converts raw images to sparse images
     /// </summary>
     public static void ConvertRawToSparse(string inputFile, string outputFile, uint blockSize = 4096)
     {
@@ -43,7 +43,7 @@ public class SparseImageConverter
     }
 
     /// <summary>
-    /// 创建一个新的 Super 镜像并保存为 Sparse 格式
+    /// Creates a new Super image and saves it in Sparse format
     /// </summary>
     public static void CreateSuperSparse(
         string outputFile,
@@ -74,7 +74,7 @@ public class SparseImageConverter
     }
 
     /// <summary>
-    /// 解包 Super 镜像（支持 Sparse 和 Raw）
+    /// Unpacks Super images (supports both Sparse and Raw formats)
     /// </summary>
     public static void UnpackSuper(string inputFile, string outputDir)
     {
@@ -86,13 +86,13 @@ public class SparseImageConverter
         using var fs = new FileStream(inputFile, FileMode.Open, FileAccess.Read);
         Stream superStream = fs;
 
-        // 检测是否为 Sparse 格式
+        // Check if it's in Sparse format
         var magicBuf = new byte[4];
         fs.ReadExactly(magicBuf, 0, 4);
         fs.Seek(0, SeekOrigin.Begin);
 
         SparseFile? sparseFile = null;
-        if (System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(magicBuf) == SparseFormat.SPARSE_HEADER_MAGIC)
+        if (System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(magicBuf) == SparseFormat.SparseHeaderMagic)
         {
             sparseFile = SparseFile.FromStream(fs);
             superStream = new SparseStream(sparseFile);
@@ -106,7 +106,7 @@ public class SparseImageConverter
                 var name = partition.GetName();
                 var outputPath = Path.Combine(outputDir, $"{name}.img");
 
-                // 1. 计算总大小并预设长度
+                // 1. Calculate total size and pre-set length
                 ulong totalSectors = 0;
                 for (var i = 0; i < partition.NumExtents; i++)
                 {
@@ -116,7 +116,7 @@ public class SparseImageConverter
                 var totalSize = (long)totalSectors * MetadataFormat.LP_SECTOR_SIZE;
 
                 using var outFs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                SparseFileNativeHelper.MarkAsSparse(outFs); // 标记为稀疏文件以支持空洞优化
+                SparseFileNativeHelper.MarkAsSparse(outFs); // Mark as sparse file for hole optimization
                 outFs.SetLength(totalSize);
 
                 long currentOutOffset = 0;
@@ -129,11 +129,11 @@ public class SparseImageConverter
                     {
                         var offset = (long)extent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
                         superStream.Seek(offset, SeekOrigin.Begin);
-                        outFs.Seek(currentOutOffset, SeekOrigin.Begin); // 定位到输出文件的确切位置
+                        outFs.Seek(currentOutOffset, SeekOrigin.Begin); // Seek to the exact position in output file
                         CopyStreamPart(superStream, outFs, size);
                     }
-                    // 对于 LP_TARGET_TYPE_ZERO，由于已 SetLength 且标记为 Sparse，
-                    // 只需跳过（currentOutOffset 增加）即可，文件系统不会分配实际空间。
+                    // For LP_TARGET_TYPE_ZERO, since SetLength was called and it's marked as Sparse,
+                    // we just need to skip it (increment currentOutOffset), the file system won't allocate actual space.
 
                     currentOutOffset += size;
                 }
@@ -168,11 +168,11 @@ public class SparseImageConverter
     }
 
     /// <summary>
-    /// 从sparse文件写入原始镜像数据
+    /// Writes raw image data from a sparse file
     /// </summary>
     private static void WriteRawImageFromSparse(SparseFile sparseFile, Stream outputStream)
     {
-        // 已经迁移到 SparseFile 内部实现，这里直接调用并使用 sparseMode=true 以支持 Seek 跳过
+        // Migrated to SparseFile internal implementation; call directly with sparseMode=true to support Seek skipping
         if (outputStream.CanSeek)
         {
             outputStream.Seek(0, SeekOrigin.Begin);
@@ -181,7 +181,7 @@ public class SparseImageConverter
     }
 
     /// <summary>
-    /// 将大的 sparse 镜像拆分为多个指定大小的镜像文件
+    /// Splits a large sparse image into multiple images of specified size
     /// </summary>
     public static void ResparseImage(string inputFile, string outputPattern, long maxFileSize)
     {
@@ -196,7 +196,7 @@ public class SparseImageConverter
                 : $"{outputPattern}.{i:D2}";
 
             using var outStream = new FileStream(outPath, FileMode.Create, FileAccess.Write);
-            files[i].WriteToStream(outStream, true); // 拆分后的镜像通常需要包含 CRC
+            files[i].WriteToStream(outStream, true); // Split images usually need to include CRC
         }
     }
 }

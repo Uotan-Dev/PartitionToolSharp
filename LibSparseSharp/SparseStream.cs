@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 
 namespace LibSparseSharp;
 /// <summary>
-/// 将 SparseFile 包装为只读 Stream，允许随机访问
+/// Wraps a SparseFile as a read-only Stream allowing random access
 /// </summary>
 public class SparseStream : Stream
 {
@@ -16,7 +16,7 @@ public class SparseStream : Stream
         _sparseFile = sparseFile;
         _length = (long)sparseFile.Header.TotalBlocks * sparseFile.Header.BlockSize;
 
-        // 构建查找表以加速随机访问 (Binary Search 准备)
+        // Build a lookup table to accelerate random access (Binary Search preparation)
         _chunkLookup = new (uint, uint, int)[sparseFile.Chunks.Count];
         uint currentBlock = 0;
         for (var i = 0; i < sparseFile.Chunks.Count; i++)
@@ -58,8 +58,8 @@ public class SparseStream : Stream
 
             if (chunk == null)
             {
-                // 如果在文件总长度范围内但没有 chunk 定义，视为 0（DONT_CARE 区域）
-                // 找到下一个 chunk 之前的所有空间或者是到文件末尾
+                // If within total file length but no chunk is defined, treat as 0 (DONT_CARE region)
+                // Find all space before the next chunk or until the end of the file
                 var nextChunkBlock = GetNextChunkBlock(_position);
                 var endOfGap = Math.Min(_length, (long)nextChunkBlock * _sparseFile.Header.BlockSize);
                 currentReadSize = (int)Math.Min(toRead - totalRead, endOfGap - _position);
@@ -94,7 +94,7 @@ public class SparseStream : Stream
     {
         var targetBlock = (uint)(position / _sparseFile.Header.BlockSize);
 
-        // 查找第一个 StartBlock > targetBlock 的 entry
+        // Find the first entry where StartBlock > targetBlock> targetBlock
         var low = 0;
         var high = _chunkLookup.Length - 1;
         var nextBlock = (uint)(_length / _sparseFile.Header.BlockSize);
@@ -119,7 +119,7 @@ public class SparseStream : Stream
     {
         switch (chunk.Header.ChunkType)
         {
-            case SparseFormat.CHUNK_TYPE_RAW:
+            case SparseFormat.ChunkTypeRaw:
                 if (chunk.DataProvider != null)
                 {
                     var read = chunk.DataProvider.Read(offsetInChunk, buffer, bufferOffset, count);
@@ -133,7 +133,7 @@ public class SparseStream : Stream
                     Array.Clear(buffer, bufferOffset, count);
                 }
                 break;
-            case SparseFormat.CHUNK_TYPE_FILL:
+            case SparseFormat.ChunkTypeFill:
                 BinaryPrimitives.WriteUInt32LittleEndian(fillValue, chunk.FillValue);
                 for (var i = 0; i < count; i++)
                 {
@@ -150,7 +150,7 @@ public class SparseStream : Stream
     {
         var targetBlock = (uint)(offset / _sparseFile.Header.BlockSize);
 
-        // 二分查找
+        // Binary search
         var low = 0;
         var high = _chunkLookup.Length - 1;
 

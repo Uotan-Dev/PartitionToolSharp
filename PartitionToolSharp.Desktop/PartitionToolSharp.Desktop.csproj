@@ -30,7 +30,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LibLpSharp\LibLpSharp.csproj" />
-    <ProjectReference Include="..\LibSpraseSharp\LibSpraseSharp.csproj" />
+    <ProjectReference Include="..\LibSparseSharp\LibSparseSharp.csproj" />
     <ProjectReference Include="..\LibFastbootSharp\LibFastbootSharp.csproj" />
   </ItemGroup>
 </Project>

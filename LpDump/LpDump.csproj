@@ -1,8 +1,8 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\LibLpSharp\LibLpSharp.csproj" />
-    <ProjectReference Include="..\LibSpraseSharp\LibSpraseSharp.csproj" />
+    <ProjectReference Include="..\LibSparseSharp\LibSparseSharp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

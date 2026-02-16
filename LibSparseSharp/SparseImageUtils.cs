@@ -1,18 +1,18 @@
 namespace LibSparseSharp;
 
 /// <summary>
-/// Sparse 镜像实用工具
+/// Sparse image utility tools
 /// </summary>
 public static class SparseImageUtils
 {
     /// <summary>
-    /// 获取文件的详细信息
+    /// Gets detailed information about a file
     /// </summary>
     public static FileInfoResult GetFileInfo(string filePath)
     {
         if (!File.Exists(filePath))
         {
-            throw new FileNotFoundException($"文件不存在: {filePath}");
+            throw new FileNotFoundException($"File not found: {filePath}");
         }
 
         var fileInfo = new FileInfo(filePath);
@@ -41,7 +41,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 文件信息结果
+    /// File information result
     /// </summary>
     public class FileInfoResult
     {
@@ -54,7 +54,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// Sparse文件详细信息
+    /// Detailed Sparse file information
     /// </summary>
     public class SparseFileInfo
     {
@@ -66,18 +66,18 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 比较两个文件的大小和类型
+    /// Compares size and type of two files
     /// </summary>
     public static FileComparisonResult CompareFiles(string file1, string file2)
     {
         if (!File.Exists(file1))
         {
-            throw new FileNotFoundException($"文件不存在: {file1}");
+            throw new FileNotFoundException($"File not found: {file1}");
         }
 
         if (!File.Exists(file2))
         {
-            throw new FileNotFoundException($"文件不存在: {file2}");
+            throw new FileNotFoundException($"File not found: {file2}");
         }
 
         var info1 = new FileInfo(file1);
@@ -110,7 +110,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 文件比较结果
+    /// File comparison result
     /// </summary>
     public class FileComparisonResult
     {
@@ -122,7 +122,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 文件基本信息
+    /// Basic file information
     /// </summary>
     public class FileBasicInfo
     {
@@ -132,7 +132,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 验证转换结果的一致性
+    /// Verifies the consistency of the conversion result
     /// </summary>
     public static ConversionVerificationResult VerifyConversion(string originalFile, string convertedFile)
     {
@@ -160,7 +160,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 转换验证结果
+    /// Conversion verification result
     /// </summary>
     public class ConversionVerificationResult
     {
@@ -172,7 +172,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 创建测试用的sparse镜像
+    /// Creates a test sparse image
     /// </summary>
     public static TestImageCreationResult CreateTestSparseImage(string outputPath, uint sizeInMB = 100, uint blockSize = 4096)
     {
@@ -211,7 +211,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 测试镜像创建结果
+    /// Test image creation result
     /// </summary>
     public class TestImageCreationResult
     {
@@ -224,7 +224,7 @@ public static class SparseImageUtils
     }
 
     /// <summary>
-    /// 从sparse镜像中提取有效数据
+    /// Extracts valid data from a sparse image
     /// </summary>
     public static DataExtractionResult ExtractValidData(string inputPath, string outputPath, long partitionOffset)
     {
@@ -235,7 +235,7 @@ public static class SparseImageUtils
                 return new DataExtractionResult
                 {
                     Success = false,
-                    ErrorMessage = "输入文件不是有效的 sparse 镜像"
+                    ErrorMessage = "Input file is not a valid sparse image"
                 };
             }
 
@@ -258,7 +258,7 @@ public static class SparseImageUtils
                 {
                     switch (chunk.Header.ChunkType)
                     {
-                        case SparseFormat.CHUNK_TYPE_RAW:
+                        case SparseFormat.ChunkTypeRaw:
                             if (chunk.DataProvider != null)
                             {
                                 var bytesExtracted = ExtractRawChunkData(chunk, currentBlock, startBlock, offsetInBlock, blockSize, outputStream);
@@ -270,7 +270,7 @@ public static class SparseImageUtils
                             }
                             break;
 
-                        case SparseFormat.CHUNK_TYPE_FILL:
+                        case SparseFormat.ChunkTypeFill:
                             var fillBytesExtracted = ExtractFillChunkData(chunk, currentBlock, startBlock, offsetInBlock, blockSize, outputStream);
                             totalBytesExtracted += fillBytesExtracted;
                             if (fillBytesExtracted > 0)
@@ -279,10 +279,10 @@ public static class SparseImageUtils
                             }
                             break;
 
-                        case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                        case SparseFormat.ChunkTypeDontCare:
                             break;
 
-                        case SparseFormat.CHUNK_TYPE_CRC32:
+                        case SparseFormat.ChunkTypeCrc32:
                             break;
 
                         default:
@@ -453,7 +453,7 @@ public static class SparseImageUtils
                 {
                     switch (chunk.Header.ChunkType)
                     {
-                        case SparseFormat.CHUNK_TYPE_RAW:
+                        case SparseFormat.ChunkTypeRaw:
                             var skipBytes = 0L;
                             var dataLength = (long)(chunk.Header.ChunkSize * blockSize);
                             if (startBlockNumber >= chunkStartBlock && startBlockNumber < chunkEndBlock)
@@ -497,7 +497,7 @@ public static class SparseImageUtils
                             }
                             break;
 
-                        case SparseFormat.CHUNK_TYPE_FILL:
+                        case SparseFormat.ChunkTypeFill:
                             var fillBytes = BitConverter.GetBytes(chunk.FillValue);
                             var fillDataLength = (long)(chunk.Header.ChunkSize * blockSize);
                             var fillSkipBytes = 0L;
@@ -523,10 +523,10 @@ public static class SparseImageUtils
                             }
                             break;
 
-                        case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                        case SparseFormat.ChunkTypeDontCare:
                             break;
 
-                        case SparseFormat.CHUNK_TYPE_CRC32:
+                        case SparseFormat.ChunkTypeCrc32:
                             break;
 
                         default:

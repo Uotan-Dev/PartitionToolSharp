@@ -1,12 +1,12 @@
 namespace LibSparseSharp;
 
 /// <summary>
-/// Sparse 镜像验证器
+/// Sparse image validator
 /// </summary>
 public static class SparseImageValidator
 {
     /// <summary>
-    /// 验证sparse镜像文件
+    /// Validates a sparse image file
     /// </summary>
     public static ValidationResult ValidateSparseImage(string filePath)
     {
@@ -28,7 +28,7 @@ public static class SparseImageValidator
         };
         if (!sparseFile.Header.IsValid())
         {
-            throw new InvalidDataException("无效的 sparse 文件头");
+            throw new InvalidDataException("Invalid sparse file header");
         }
         uint totalBlocks = 0;
         var chunkInfos = new List<ChunkInfo>();
@@ -39,7 +39,7 @@ public static class SparseImageValidator
 
             if (!chunk.Header.IsValid())
             {
-                throw new InvalidDataException($"第 {i} 个 chunk 头无效");
+                throw new InvalidDataException($"Invalid chunk header at index {i}");
             }
 
             var chunkInfo = new ChunkInfo
@@ -57,7 +57,7 @@ public static class SparseImageValidator
         result.Chunks = chunkInfos;
         if (totalBlocks > sparseFile.Header.TotalBlocks)
         {
-            throw new InvalidDataException($"chunk 总块数 ({totalBlocks}) 超过了文件头中的总块数 ({sparseFile.Header.TotalBlocks})");
+            throw new InvalidDataException($"Total blocks in chunks ({totalBlocks}) exceeds total blocks in header ({sparseFile.Header.TotalBlocks})");
         }
 
         result.CalculatedTotalBlocks = totalBlocks;
@@ -65,7 +65,7 @@ public static class SparseImageValidator
     }
 
     /// <summary>
-    /// 验证结果
+    /// Validation result
     /// </summary>
     public class ValidationResult
     {
@@ -78,7 +78,7 @@ public static class SparseImageValidator
     }
 
     /// <summary>
-    /// 文件头信息
+    /// Header information
     /// </summary>
     public class HeaderInfo
     {
@@ -90,7 +90,7 @@ public static class SparseImageValidator
     }
 
     /// <summary>
-    /// Chunk信息
+    /// Chunk information
     /// </summary>
     public class ChunkInfo
     {
@@ -101,7 +101,7 @@ public static class SparseImageValidator
     }
 
     /// <summary>
-    /// 检查文件是否为sparse镜像
+    /// Checks if the file is a sparse image
     /// </summary>
     public static bool IsSparseImage(string filePath)
     {
@@ -115,7 +115,7 @@ public static class SparseImageValidator
             }
 
             var magic = BitConverter.ToUInt32(magicBytes, 0);
-            return magic == SparseFormat.SPARSE_HEADER_MAGIC;
+            return magic == SparseFormat.SparseHeaderMagic;
         }
         catch
         {
@@ -124,13 +124,13 @@ public static class SparseImageValidator
     }
 
     /// <summary>
-    /// 获取sparse镜像文件的详细信息
+    /// Gets detailed information about a sparse image file
     /// </summary>
     public static SparseImageInfo GetSparseImageInfo(string filePath)
     {
         if (!IsSparseImage(filePath))
         {
-            throw new InvalidDataException("不是有效的 sparse 镜像文件");
+            throw new InvalidDataException("Not a valid sparse image file");
         }
 
         var header = SparseFile.PeekHeader(filePath);
@@ -153,7 +153,7 @@ public static class SparseImageValidator
     }
 
     /// <summary>
-    /// Sparse镜像详细信息
+    /// Detailed Sparse image information
     /// </summary>
     public class SparseImageInfo
     {

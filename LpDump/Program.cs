@@ -32,7 +32,7 @@ rootCommand.SetHandler((superImage, useJson) =>
         fs.Seek(0, SeekOrigin.Begin);
 
         SparseFile? sparseFile = null;
-        if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SPARSE_HEADER_MAGIC)
+        if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SparseHeaderMagic)
         {
             sparseFile = SparseFile.FromStream(fs);
             inputStream = new SparseStream(sparseFile);

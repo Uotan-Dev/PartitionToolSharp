@@ -33,7 +33,7 @@ public class SuperImageBuilder(ulong deviceSize, uint metadataMaxSize, uint meta
 
         var sparseFile = new SparseFile(_blockSize, (long)metadata.BlockDevices[0].Size);
 
-        // 1. 写入几何信息及其主元数据
+        // 1. Write geometry information and primary metadata
         sparseFile.AddDontCareChunk(MetadataFormat.LP_PARTITION_RESERVED_BYTES);
         sparseFile.AddRawChunk(geometryBlob);
         sparseFile.AddRawChunk(geometryBlob);
@@ -56,7 +56,7 @@ public class SuperImageBuilder(ulong deviceSize, uint metadataMaxSize, uint meta
             sparseFile.AddDontCareChunk((uint)(firstLogicalOffset - metadataEndOffset));
         }
 
-        // 2. 写入各分区数据
+        // 2. Write partition data
         var allExtents = new List<(string PartitionName, LpMetadataExtent Extent)>();
         foreach (var p in metadata.Partitions)
         {
@@ -121,7 +121,7 @@ public class SuperImageBuilder(ulong deviceSize, uint metadataMaxSize, uint meta
             currentLogicalOffset = extentOffset + extentSize;
         }
 
-        // 3. 在末尾写入备份元数据插槽
+        // 3. Write backup metadata slots at the end
         var totalDeviceSize = (long)metadata.BlockDevices[0].Size;
         var backupMetadataSize = (long)metadata.Geometry.MetadataMaxSize * metadata.Geometry.MetadataSlotCount;
         var backupMetadataStart = totalDeviceSize - backupMetadataSize;

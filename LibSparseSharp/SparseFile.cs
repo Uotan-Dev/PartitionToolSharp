@@ -3,155 +3,14 @@ using System.Runtime.InteropServices;
 
 namespace LibSparseSharp;
 
-public interface ISparseDataProvider : IDisposable
-{
-    long Length { get; }
-    void WriteTo(Stream stream);
-    int Read(long offset, byte[] buffer, int bufferOffset, int count);
-    ISparseDataProvider GetSubProvider(long offset, long length);
-}
-
-public class MemoryDataProvider(byte[] data, int offset = 0, int length = -1) : ISparseDataProvider
-{
-    private readonly int _offset = offset;
-    private readonly int _length = length < 0 ? data.Length - offset : length;
-
-    public long Length => _length;
-    public void WriteTo(Stream stream) => stream.Write(data, _offset, _length);
-    public int Read(long offset, byte[] buffer, int bufferOffset, int count)
-    {
-        var available = (int)Math.Max(0, _length - offset);
-        var toCopy = Math.Min(count, available);
-        if (toCopy <= 0)
-        {
-            return 0;
-        }
-
-        Array.Copy(data, _offset + (int)offset, buffer, bufferOffset, toCopy);
-        return toCopy;
-    }
-
-    public ISparseDataProvider GetSubProvider(long offset, long length) => new MemoryDataProvider(data, _offset + (int)offset, (int)length);
-
-    public void Dispose() { }
-}
-
-public class FileDataProvider(string filePath, long offset, long length) : ISparseDataProvider
-{
-    public long Length => length;
-    public void WriteTo(Stream stream)
-    {
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        fs.Seek(offset, SeekOrigin.Begin);
-        var buffer = new byte[1024 * 1024];
-        var remaining = length;
-        while (remaining > 0)
-        {
-            var toRead = (int)Math.Min(buffer.Length, remaining);
-            var read = fs.Read(buffer, 0, toRead);
-            if (read == 0)
-            {
-                break;
-            }
-
-            stream.Write(buffer, 0, read);
-            remaining -= read;
-        }
-    }
-    public int Read(long inOffset, byte[] buffer, int bufferOffset, int count)
-    {
-        if (inOffset >= length)
-        {
-            return 0;
-        }
-
-        var toRead = (int)Math.Min(count, length - inOffset);
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        fs.Seek(offset + inOffset, SeekOrigin.Begin);
-        return fs.Read(buffer, bufferOffset, toRead);
-    }
-
-    public ISparseDataProvider GetSubProvider(long subOffset, long subLength) => new FileDataProvider(filePath, offset + subOffset, subLength);
-
-    public void Dispose() { }
-}
-
-public class StreamDataProvider(Stream stream, long offset, long length, bool leaveOpen = true) : ISparseDataProvider
-{
-    public long Length => length;
-    public void WriteTo(Stream outStream)
-    {
-        if (stream.CanSeek)
-        {
-            stream.Seek(offset, SeekOrigin.Begin);
-        }
-        var buffer = new byte[1024 * 1024];
-        var remaining = length;
-        while (remaining > 0)
-        {
-            var toRead = (int)Math.Min(buffer.Length, remaining);
-            var read = stream.Read(buffer, 0, toRead);
-            if (read == 0)
-            {
-                break;
-            }
-
-            outStream.Write(buffer, 0, read);
-            remaining -= read;
-        }
-    }
-    public int Read(long inOffset, byte[] buffer, int bufferOffset, int count)
-    {
-        if (inOffset >= length)
-        {
-            return 0;
-        }
-
-        var toRead = (int)Math.Min(count, length - inOffset);
-        if (stream.CanSeek)
-        {
-            stream.Seek(offset + inOffset, SeekOrigin.Begin);
-        }
-        return stream.Read(buffer, bufferOffset, toRead);
-    }
-
-    public ISparseDataProvider GetSubProvider(long subOffset, long subLength) => new StreamDataProvider(stream, offset + subOffset, subLength, true);
-
-    public void Dispose()
-    {
-        if (!leaveOpen)
-        {
-            stream.Dispose();
-        }
-    }
-}
-
-public enum SparseReadMode
-{
-    Normal = 0,
-    Sparse = 1,
-    Hole = 2
-}
-
-public class SparseChunk(ChunkHeader header) : IDisposable
-{
-    public uint StartBlock { get; set; }
-    public ChunkHeader Header { get; set; } = header;
-    public ISparseDataProvider? DataProvider { get; set; }
-    public uint FillValue { get; set; }
-
-    public void Dispose() => DataProvider?.Dispose();
-}
-
 public class SparseFile : IDisposable
 {
     public static SparseHeader PeekHeader(string filePath)
     {
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
-        var headerData = new byte[SparseFormat.SPARSE_HEADER_SIZE];
-        return stream.Read(headerData, 0, headerData.Length) != headerData.Length
-            ? throw new InvalidDataException("无法读取 sparse 文件头")
-            : SparseHeader.FromBytes(headerData);
+        Span<byte> headerData = stackalloc byte[SparseFormat.SparseHeaderSize];
+        stream.ReadExactly(headerData);
+        return SparseHeader.FromBytes(headerData);
     }
 
     public SparseHeader Header { get; set; }
@@ -159,7 +18,7 @@ public class SparseFile : IDisposable
     public bool Verbose { get; set; } = false;
 
     /// <summary>
-    /// 获取当前文件已添加的数据块总数（实际覆盖的最大范围）
+    /// Gets the total number of blocks already added (the actual maximum coverage range)
     /// </summary>
     public uint CurrentBlock
     {
@@ -182,11 +41,11 @@ public class SparseFile : IDisposable
         var totalBlocks = (uint)((totalSize + blockSize - 1) / blockSize);
         Header = new SparseHeader
         {
-            Magic = SparseFormat.SPARSE_HEADER_MAGIC,
+            Magic = SparseFormat.SparseHeaderMagic,
             MajorVersion = 1,
             MinorVersion = 0,
-            FileHeaderSize = SparseFormat.SPARSE_HEADER_SIZE,
-            ChunkHeaderSize = SparseFormat.CHUNK_HEADER_SIZE,
+            FileHeaderSize = SparseFormat.SparseHeaderSize,
+            ChunkHeaderSize = SparseFormat.ChunkHeaderSize,
             BlockSize = blockSize,
             TotalBlocks = totalBlocks,
             TotalChunks = 0,
@@ -211,58 +70,53 @@ public class SparseFile : IDisposable
     private static SparseFile FromStreamInternal(Stream stream, string? filePath, bool validateCrc, bool verbose = false)
     {
         var sparseFile = new SparseFile { Verbose = verbose };
-        var headerData = new byte[SparseFormat.SPARSE_HEADER_SIZE];
-        if (stream.Read(headerData, 0, headerData.Length) != headerData.Length)
-        {
-            throw new InvalidDataException("无法读取 sparse 文件头");
-        }
+        Span<byte> headerData = stackalloc byte[SparseFormat.SparseHeaderSize];
+        stream.ReadExactly(headerData);
 
         sparseFile.Header = SparseHeader.FromBytes(headerData);
 
         if (verbose)
         {
-            SparseLogger.Info($"正在解析 Sparse 镜像 Header: BlockSize={sparseFile.Header.BlockSize}, TotalBlocks={sparseFile.Header.TotalBlocks}, TotalChunks={sparseFile.Header.TotalChunks}");
+            SparseLogger.Info($"Parsing Sparse image header: BlockSize={sparseFile.Header.BlockSize}, TotalBlocks={sparseFile.Header.TotalBlocks}, TotalChunks={sparseFile.Header.TotalChunks}");
         }
 
         if (!sparseFile.Header.IsValid())
         {
-            throw new InvalidDataException("无效的 sparse 文件头");
+            throw new InvalidDataException("Invalid sparse header");
         }
 
-        if (sparseFile.Header.FileHeaderSize > SparseFormat.SPARSE_HEADER_SIZE)
+        if (sparseFile.Header.FileHeaderSize > SparseFormat.SparseHeaderSize)
         {
-            stream.Seek(sparseFile.Header.FileHeaderSize - SparseFormat.SPARSE_HEADER_SIZE, SeekOrigin.Current);
+            stream.Seek(sparseFile.Header.FileHeaderSize - SparseFormat.SparseHeaderSize, SeekOrigin.Current);
         }
 
         var checksum = Crc32.Begin();
         var buffer = new byte[1024 * 1024];
         uint currentBlock = 0;
 
+        Span<byte> chunkHeaderData = stackalloc byte[SparseFormat.ChunkHeaderSize];
+        Span<byte> fillData = stackalloc byte[4];
         for (uint i = 0; i < sparseFile.Header.TotalChunks; i++)
         {
-            var chunkHeaderData = new byte[SparseFormat.CHUNK_HEADER_SIZE];
-            if (stream.Read(chunkHeaderData, 0, chunkHeaderData.Length) != chunkHeaderData.Length)
-            {
-                throw new InvalidDataException($"无法读取第 {i} 个 chunk 头");
-            }
+            stream.ReadExactly(chunkHeaderData);
 
             var chunkHeader = ChunkHeader.FromBytes(chunkHeaderData);
 
             if (verbose)
             {
-                SparseLogger.Info($"Chunk #{i}: 类型=0x{chunkHeader.ChunkType:X4}, 大小={chunkHeader.ChunkSize} blocks, 总字节流大小={chunkHeader.TotalSize}");
+                SparseLogger.Info($"Chunk #{i}: Type=0x{chunkHeader.ChunkType:X4}, Size={chunkHeader.ChunkSize} blocks, Total Size={chunkHeader.TotalSize}");
             }
 
-            if (sparseFile.Header.ChunkHeaderSize > SparseFormat.CHUNK_HEADER_SIZE)
+            if (sparseFile.Header.ChunkHeaderSize > SparseFormat.ChunkHeaderSize)
             {
-                stream.Seek(sparseFile.Header.ChunkHeaderSize - SparseFormat.CHUNK_HEADER_SIZE, SeekOrigin.Current);
+                stream.Seek(sparseFile.Header.ChunkHeaderSize - SparseFormat.ChunkHeaderSize, SeekOrigin.Current);
             }
 
             var chunk = new SparseChunk(chunkHeader) { StartBlock = currentBlock };
 
             if (!chunkHeader.IsValid())
             {
-                throw new InvalidDataException($"第 {i} 个 chunk 头无效: 类型 0x{chunkHeader.ChunkType:X4}");
+                throw new InvalidDataException($"Invalid chunk header for chunk {i}: Type 0x{chunkHeader.ChunkType:X4}");
             }
 
             var dataSize = (long)chunkHeader.TotalSize - sparseFile.Header.ChunkHeaderSize;
@@ -270,10 +124,10 @@ public class SparseFile : IDisposable
 
             switch (chunkHeader.ChunkType)
             {
-                case SparseFormat.CHUNK_TYPE_RAW:
+                case SparseFormat.ChunkTypeRaw:
                     if (dataSize != expectedRawSize)
                     {
-                        throw new InvalidDataException($"第 {i} 个 RAW chunk 的总大小 ({chunkHeader.TotalSize}) 与预期数据大小 ({expectedRawSize}) 不匹配");
+                        throw new InvalidDataException($"Total size ({chunkHeader.TotalSize}) for RAW chunk {i} does not match expected data size ({expectedRawSize})");
                     }
 
                     if (validateCrc)
@@ -282,10 +136,7 @@ public class SparseFile : IDisposable
                         while (remaining > 0)
                         {
                             var toRead = (int)Math.Min(buffer.Length, remaining);
-                            if (stream.Read(buffer, 0, toRead) != toRead)
-                            {
-                                throw new InvalidDataException($"无法读取第 {i} 个 chunk 的原始数据以进行校验");
-                            }
+                            stream.ReadExactly(buffer, 0, toRead);
                             checksum = Crc32.Update(checksum, buffer, 0, toRead);
                             remaining -= toRead;
                         }
@@ -298,10 +149,7 @@ public class SparseFile : IDisposable
                         {
                             stream.Seek(-dataSize, SeekOrigin.Current);
                             var rawData = new byte[dataSize];
-                            if (stream.Read(rawData, 0, (int)dataSize) != (int)dataSize)
-                            {
-                                throw new InvalidDataException($"校验后无法重新读取第 {i} 个 chunk 的数据");
-                            }
+                            stream.ReadExactly(rawData);
                             chunk.DataProvider = new MemoryDataProvider(rawData);
                         }
                     }
@@ -314,28 +162,21 @@ public class SparseFile : IDisposable
                     {
                         if (dataSize > int.MaxValue)
                         {
-                            throw new NotSupportedException($"第 {i} 个 chunk 的原始数据太大 ({dataSize} 字节)，超过了内存缓冲区限制。");
+                            throw new NotSupportedException($"Raw data for chunk {i} is too large ({dataSize} bytes), exceeding memory buffer limits.");
                         }
                         var rawData = new byte[dataSize];
-                        if (stream.Read(rawData, 0, (int)dataSize) != (int)dataSize)
-                        {
-                            throw new InvalidDataException($"无法读取第 {i} 个 chunk 的原始数据");
-                        }
+                        stream.ReadExactly(rawData);
                         chunk.DataProvider = new MemoryDataProvider(rawData);
                     }
                     break;
 
-                case SparseFormat.CHUNK_TYPE_FILL:
+                case SparseFormat.ChunkTypeFill:
                     if (dataSize < 4)
                     {
-                        throw new InvalidDataException($"第 {i} 个 FILL chunk 的数据大小 ({dataSize}) 小于 4 字节");
+                        throw new InvalidDataException($"Data size ({dataSize}) for FILL chunk {i} is less than 4 bytes");
                     }
 
-                    var fillData = new byte[4];
-                    if (stream.Read(fillData, 0, 4) != 4)
-                    {
-                        throw new InvalidDataException($"无法读取第 {i} 个 chunk 的填充值");
-                    }
+                    stream.ReadExactly(fillData);
 
                     chunk.FillValue = BinaryPrimitives.ReadUInt32LittleEndian(fillData);
 
@@ -363,7 +204,7 @@ public class SparseFile : IDisposable
                     }
                     break;
 
-                case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                case SparseFormat.ChunkTypeDontCare:
                     if (validateCrc)
                     {
                         Array.Clear(buffer, 0, buffer.Length);
@@ -381,18 +222,18 @@ public class SparseFile : IDisposable
                     }
                     break;
 
-                case SparseFormat.CHUNK_TYPE_CRC32:
+                case SparseFormat.ChunkTypeCrc32:
                     if (dataSize >= 4)
                     {
                         var crcFileData = new byte[4];
                         if (stream.Read(crcFileData, 0, 4) != 4)
                         {
-                            throw new InvalidDataException($"无法读取第 {i} 个 chunk 的 CRC32 值");
+                            throw new InvalidDataException($"Failed to read CRC32 value for chunk {i}");
                         }
                         var fileCrc = BinaryPrimitives.ReadUInt32LittleEndian(crcFileData);
                         if (validateCrc && fileCrc != Crc32.Finish(checksum))
                         {
-                            throw new InvalidDataException($"CRC32 校验失败: 文件中为 0x{fileCrc:X8}, 计算得到 0x{Crc32.Finish(checksum):X8}");
+                            throw new InvalidDataException($"CRC32 checksum mismatch: file has 0x{fileCrc:X8}, computed 0x{Crc32.Finish(checksum):X8}");
                         }
                         if (dataSize > 4)
                         {
@@ -402,34 +243,28 @@ public class SparseFile : IDisposable
                     break;
 
                 default:
-                    throw new InvalidDataException($"第 {i} 个 chunk 类型未知: 0x{chunkHeader.ChunkType:X4}");
+                    throw new InvalidDataException($"Unknown chunk type for chunk {i}: 0x{chunkHeader.ChunkType:X4}");
             }
 
-            if (chunkHeader.ChunkType != SparseFormat.CHUNK_TYPE_CRC32)
+            if (chunkHeader.ChunkType != SparseFormat.ChunkTypeCrc32)
             {
                 sparseFile.Chunks.Add(chunk);
                 currentBlock += chunkHeader.ChunkSize;
             }
         }
 
-        uint actualTotalBlocks = 0;
-        foreach (var chunk in sparseFile.Chunks)
-        {
-            actualTotalBlocks += chunk.Header.ChunkSize;
-        }
-
         if (verbose)
         {
-            SparseLogger.Info($"Sparse 镜像解析完成，共统计到 {sparseFile.Chunks.Count} 个数据块，总计 {actualTotalBlocks} Blocks");
+            SparseLogger.Info($"Sparse image parsing completed: {sparseFile.Chunks.Count} chunks, {currentBlock} blocks total");
         }
 
-        return sparseFile.Header.TotalBlocks != actualTotalBlocks
-            ? throw new InvalidDataException($"块数不匹配: Sparse 表头声明 {sparseFile.Header.TotalBlocks} 块, 但实际解析到 {actualTotalBlocks} 块")
+        return sparseFile.Header.TotalBlocks != currentBlock
+            ? throw new InvalidDataException($"Block count mismatch: Sparse header expects {sparseFile.Header.TotalBlocks} blocks, but parsed {currentBlock}")
             : sparseFile;
     }
 
     /// <summary>
-    /// 将sparse文件写入流（对齐 libsparse 的 sparse_file_write）
+    /// Writes the sparse file to stream (aligned with libsparse's sparse_file_write)
     /// </summary>
     public void WriteToStream(Stream stream, bool sparse = true, bool gzip = false, bool includeCrc = false)
     {
@@ -447,7 +282,7 @@ public class SparseFile : IDisposable
 
         try
         {
-            // 预处理：合并/填补间隙
+            // Pre-processing: merge/fill gaps
             var sortedChunks = Chunks.OrderBy(c => c.StartBlock).ToList();
             var finalChunks = new List<SparseChunk>();
             uint currentBlock = 0;
@@ -456,13 +291,13 @@ public class SparseFile : IDisposable
             {
                 if (chunk.StartBlock > currentBlock)
                 {
-                    // 填补间隙
+                    // Fill gaps
                     var gapBlocks = chunk.StartBlock - currentBlock;
                     finalChunks.Add(new SparseChunk(new ChunkHeader
                     {
-                        ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                        ChunkType = SparseFormat.ChunkTypeDontCare,
                         ChunkSize = gapBlocks,
-                        TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+                        TotalSize = SparseFormat.ChunkHeaderSize
                     })
                     { StartBlock = currentBlock });
                 }
@@ -485,28 +320,31 @@ public class SparseFile : IDisposable
                 totalChunks++;
             }
 
-            outHeader.TotalChunks = totalChunks;
+            outHeader = Header with { TotalChunks = totalChunks };
             if (sumBlocks > outHeader.TotalBlocks)
             {
-                outHeader.TotalBlocks = sumBlocks;
+                outHeader = outHeader with { TotalBlocks = sumBlocks };
             }
 
-            var headerData = outHeader.ToBytes();
-            targetStream.Write(headerData, 0, headerData.Length);
+            Span<byte> headerData = stackalloc byte[SparseFormat.SparseHeaderSize];
+            outHeader.WriteTo(headerData);
+            targetStream.Write(headerData);
 
             var checksum = Crc32.Begin();
             var buffer = new byte[1024 * 1024];
 
+            Span<byte> chunkHeaderData = stackalloc byte[SparseFormat.ChunkHeaderSize];
+            Span<byte> fillValData = stackalloc byte[4];
             foreach (var chunk in finalChunks)
             {
-                var chunkHeaderData = chunk.Header.ToBytes();
-                targetStream.Write(chunkHeaderData, 0, chunkHeaderData.Length);
+                chunk.Header.WriteTo(chunkHeaderData);
+                targetStream.Write(chunkHeaderData);
 
                 var expectedDataSize = (long)chunk.Header.ChunkSize * outHeader.BlockSize;
 
                 switch (chunk.Header.ChunkType)
                 {
-                    case SparseFormat.CHUNK_TYPE_RAW:
+                    case SparseFormat.ChunkTypeRaw:
                         if (chunk.DataProvider != null)
                         {
                             long providerOffset = 0;
@@ -560,17 +398,14 @@ public class SparseFile : IDisposable
                         }
                         break;
 
-                    case SparseFormat.CHUNK_TYPE_FILL:
-                        var fillValData = new byte[4];
+                    case SparseFormat.ChunkTypeFill:
                         BinaryPrimitives.WriteUInt32LittleEndian(fillValData, chunk.FillValue);
-                        targetStream.Write(fillValData, 0, fillValData.Length);
+                        targetStream.Write(fillValData);
                         if (includeCrc)
                         {
-                            var valBytes = new byte[4];
-                            BinaryPrimitives.WriteUInt32LittleEndian(valBytes, chunk.FillValue);
                             for (var i = 0; i <= buffer.Length - 4; i += 4)
                             {
-                                Array.Copy(valBytes, 0, buffer, i, 4);
+                                BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(i), chunk.FillValue);
                             }
 
                             long processed = 0;
@@ -583,7 +418,7 @@ public class SparseFile : IDisposable
                         }
                         break;
 
-                    case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                    case SparseFormat.ChunkTypeDontCare:
                         if (includeCrc)
                         {
                             Array.Clear(buffer, 0, buffer.Length);
@@ -597,7 +432,7 @@ public class SparseFile : IDisposable
                         }
                         break;
 
-                    case SparseFormat.CHUNK_TYPE_CRC32:
+                    case SparseFormat.ChunkTypeCrc32:
                         break;
                     default:
                         break;
@@ -609,12 +444,12 @@ public class SparseFile : IDisposable
                 var skipSize = outHeader.TotalBlocks - sumBlocks;
                 var skipHeader = new ChunkHeader
                 {
-                    ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                    ChunkType = SparseFormat.ChunkTypeDontCare,
                     Reserved = 0,
                     ChunkSize = skipSize,
-                    TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+                    TotalSize = SparseFormat.ChunkHeaderSize
                 };
-                targetStream.Write(skipHeader.ToBytes(), 0, SparseFormat.CHUNK_HEADER_SIZE);
+                targetStream.Write(skipHeader.ToBytes(), 0, SparseFormat.ChunkHeaderSize);
 
                 if (includeCrc)
                 {
@@ -635,22 +470,22 @@ public class SparseFile : IDisposable
                 var finalChecksum = Crc32.Finish(checksum);
                 var crcHeader = new ChunkHeader
                 {
-                    ChunkType = SparseFormat.CHUNK_TYPE_CRC32,
+                    ChunkType = SparseFormat.ChunkTypeCrc32,
                     Reserved = 0,
                     ChunkSize = 0,
-                    TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4
+                    TotalSize = SparseFormat.ChunkHeaderSize + 4
                 };
                 var finalCrcData = new byte[4];
                 BinaryPrimitives.WriteUInt32LittleEndian(finalCrcData, finalChecksum);
-                targetStream.Write(crcHeader.ToBytes(), 0, SparseFormat.CHUNK_HEADER_SIZE);
+                targetStream.Write(crcHeader.ToBytes(), 0, SparseFormat.ChunkHeaderSize);
                 targetStream.Write(finalCrcData, 0, 4);
 
-                outHeader.ImageChecksum = finalChecksum;
+                outHeader = outHeader with { ImageChecksum = finalChecksum };
                 if (targetStream.CanSeek)
                 {
                     var currentPos = targetStream.Position;
                     targetStream.Seek(0, SeekOrigin.Begin);
-                    targetStream.Write(outHeader.ToBytes(), 0, SparseFormat.SPARSE_HEADER_SIZE);
+                    targetStream.Write(outHeader.ToBytes(), 0, SparseFormat.SparseHeaderSize);
                     targetStream.Seek(currentPos, SeekOrigin.Begin);
                 }
             }
@@ -672,7 +507,7 @@ public class SparseFile : IDisposable
             var size = (long)chunk.Header.ChunkSize * Header.BlockSize;
             switch (chunk.Header.ChunkType)
             {
-                case SparseFormat.CHUNK_TYPE_RAW:
+                case SparseFormat.ChunkTypeRaw:
                     if (chunk.DataProvider != null)
                     {
                         long written = 0;
@@ -718,7 +553,7 @@ public class SparseFile : IDisposable
                         }
                     }
                     break;
-                case SparseFormat.CHUNK_TYPE_FILL:
+                case SparseFormat.ChunkTypeFill:
                     var fillValBytes = new byte[4];
                     BinaryPrimitives.WriteUInt32LittleEndian(fillValBytes, chunk.FillValue);
                     for (var i = 0; i <= buffer.Length - 4; i += 4)
@@ -734,7 +569,7 @@ public class SparseFile : IDisposable
                         fillRemaining -= toWrite;
                     }
                     break;
-                case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                case SparseFormat.ChunkTypeDontCare:
                     if (sparseMode && stream.CanSeek)
                     {
                         stream.Seek(size, SeekOrigin.Current);
@@ -764,7 +599,7 @@ public class SparseFile : IDisposable
     }
 
     /// <summary>
-    /// 获取指定的块起始索引，并检查是否重叠
+    /// Gets the specified block start index and checks for overlaps
     /// </summary>
     private uint GetNextBlockAndCheckOverlap(uint? blockIndex, uint sizeInBlocks)
     {
@@ -773,7 +608,7 @@ public class SparseFile : IDisposable
         {
             if (start < chunk.StartBlock + chunk.Header.ChunkSize && start + sizeInBlocks > chunk.StartBlock)
             {
-                throw new ArgumentException($"块区域 [{start}, {start + sizeInBlocks}) 与现有块 [{chunk.StartBlock}, {chunk.StartBlock + chunk.Header.ChunkSize}) 重叠。");
+                throw new ArgumentException($"Block region [{start}, {start + sizeInBlocks}) overlaps with existing chunk [{chunk.StartBlock}, {chunk.StartBlock + chunk.Header.ChunkSize}).");
             }
         }
         return start;
@@ -795,7 +630,7 @@ public class SparseFile : IDisposable
     public delegate int SparseWriteCallback(byte[]? data, int length);
 
     /// <summary>
-    /// 通过回调函数写入 Sparse 文件（对齐 libsparse 的 sparse_file_callback）
+    /// Writes the sparse file using a callback function (aligns with libsparse's sparse_file_callback)
     /// </summary>
     public void WriteWithCallback(SparseWriteCallback callback, bool sparse = true, bool includeCrc = false)
     {
@@ -807,7 +642,7 @@ public class SparseFile : IDisposable
                 var size = (long)chunk.Header.ChunkSize * Header.BlockSize;
                 switch (chunk.Header.ChunkType)
                 {
-                    case SparseFormat.CHUNK_TYPE_RAW:
+                    case SparseFormat.ChunkTypeRaw:
                         if (chunk.DataProvider != null)
                         {
                             long written = 0;
@@ -850,7 +685,7 @@ public class SparseFile : IDisposable
                             }
                         }
                         break;
-                    case SparseFormat.CHUNK_TYPE_FILL:
+                    case SparseFormat.ChunkTypeFill:
                         var fillValBytes = new byte[4];
                         BinaryPrimitives.WriteUInt32LittleEndian(fillValBytes, chunk.FillValue);
                         for (var i = 0; i <= buffer.Length - 4; i += 4)
@@ -870,7 +705,7 @@ public class SparseFile : IDisposable
                             fillRemaining -= toWrite;
                         }
                         break;
-                    case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                    case SparseFormat.ChunkTypeDontCare:
                         if (callback(null, (int)size) < 0)
                         {
                             return;
@@ -884,7 +719,7 @@ public class SparseFile : IDisposable
             return;
         }
 
-        // Sparse 模式下的回调写入
+        // Callback writing in Sparse mode
         using var ms = new MemoryStream();
         WriteToStream(ms, true, false, includeCrc);
         var bytes = ms.ToArray();
@@ -902,7 +737,7 @@ public class SparseFile : IDisposable
 
         while (remaining > 0)
         {
-            var partSize = Math.Min(remaining, SparseFormat.MAX_CHUNK_DATA_SIZE);
+            var partSize = Math.Min(remaining, SparseFormat.MaxChunkDataSize);
             if (partSize < remaining && partSize % blockSize != 0)
             {
                 partSize = partSize / blockSize * blockSize;
@@ -915,10 +750,10 @@ public class SparseFile : IDisposable
             var chunkBlocks = (partSize + blockSize - 1) / blockSize;
             var chunkHeader = new ChunkHeader
             {
-                ChunkType = SparseFormat.CHUNK_TYPE_RAW,
+                ChunkType = SparseFormat.ChunkTypeRaw,
                 Reserved = 0,
                 ChunkSize = chunkBlocks,
-                TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + ((long)chunkBlocks * blockSize))
+                TotalSize = (uint)(SparseFormat.ChunkHeaderSize + ((long)chunkBlocks * blockSize))
             };
 
             var chunk = new SparseChunk(chunkHeader)
@@ -945,7 +780,7 @@ public class SparseFile : IDisposable
 
         while (remaining > 0)
         {
-            var partSize = Math.Min(remaining, SparseFormat.MAX_CHUNK_DATA_SIZE);
+            var partSize = Math.Min(remaining, SparseFormat.MaxChunkDataSize);
             if (partSize < remaining && partSize % blockSize != 0)
             {
                 partSize = partSize / blockSize * blockSize;
@@ -958,10 +793,10 @@ public class SparseFile : IDisposable
             var chunkBlocks = (partSize + blockSize - 1) / blockSize;
             var chunkHeader = new ChunkHeader
             {
-                ChunkType = SparseFormat.CHUNK_TYPE_RAW,
+                ChunkType = SparseFormat.ChunkTypeRaw,
                 Reserved = 0,
                 ChunkSize = chunkBlocks,
-                TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + ((long)chunkBlocks * blockSize))
+                TotalSize = (uint)(SparseFormat.ChunkHeaderSize + ((long)chunkBlocks * blockSize))
             };
 
             var chunk = new SparseChunk(chunkHeader)
@@ -988,7 +823,7 @@ public class SparseFile : IDisposable
 
         while (remaining > 0)
         {
-            var partSize = Math.Min(remaining, SparseFormat.MAX_CHUNK_DATA_SIZE);
+            var partSize = Math.Min(remaining, SparseFormat.MaxChunkDataSize);
             if (partSize < remaining && partSize % blockSize != 0)
             {
                 partSize = partSize / blockSize * blockSize;
@@ -1001,10 +836,10 @@ public class SparseFile : IDisposable
             var chunkBlocks = (partSize + blockSize - 1) / blockSize;
             var chunkHeader = new ChunkHeader
             {
-                ChunkType = SparseFormat.CHUNK_TYPE_RAW,
+                ChunkType = SparseFormat.ChunkTypeRaw,
                 Reserved = 0,
                 ChunkSize = chunkBlocks,
-                TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + ((long)chunkBlocks * blockSize))
+                TotalSize = (uint)(SparseFormat.ChunkHeaderSize + ((long)chunkBlocks * blockSize))
             };
 
             var chunk = new SparseChunk(chunkHeader)
@@ -1046,10 +881,10 @@ public class SparseFile : IDisposable
 
             var chunkHeader = new ChunkHeader
             {
-                ChunkType = SparseFormat.CHUNK_TYPE_FILL,
+                ChunkType = SparseFormat.ChunkTypeFill,
                 Reserved = 0,
                 ChunkSize = partBlocks,
-                TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4
+                TotalSize = SparseFormat.ChunkHeaderSize + 4
             };
 
             var chunk = new SparseChunk(chunkHeader)
@@ -1084,10 +919,10 @@ public class SparseFile : IDisposable
 
             var chunkHeader = new ChunkHeader
             {
-                ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                ChunkType = SparseFormat.ChunkTypeDontCare,
                 Reserved = 0,
                 ChunkSize = partBlocks,
-                TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+                TotalSize = SparseFormat.ChunkHeaderSize
             };
 
             var chunk = new SparseChunk(chunkHeader) { StartBlock = currentBlockStart };
@@ -1108,11 +943,11 @@ public class SparseFile : IDisposable
     public List<SparseFile> Resparse(long maxFileSize)
     {
         var result = new List<SparseFile>();
-        long overhead = SparseFormat.SPARSE_HEADER_SIZE + (2 * SparseFormat.CHUNK_HEADER_SIZE) + 4;
+        long overhead = SparseFormat.SparseHeaderSize + (2 * SparseFormat.ChunkHeaderSize) + 4;
 
         if (maxFileSize <= overhead)
         {
-            throw new ArgumentException($"maxFileSize 必须大于基础结构开销 ({overhead} 字节)");
+            throw new ArgumentException($"maxFileSize must be greater than the infrastructure overhead ({overhead} bytes)");
         }
 
         var fileLimit = maxFileSize - overhead;
@@ -1144,14 +979,14 @@ public class SparseFile : IDisposable
                 var count = GetSparseChunkSize(entry.Chunk);
                 if (entry.StartBlock > lastBlock)
                 {
-                    count += SparseFormat.CHUNK_HEADER_SIZE;
+                    count += SparseFormat.ChunkHeaderSize;
                 }
 
                 lastBlock = entry.StartBlock + entry.Chunk.Header.ChunkSize;
 
                 if (fileLen + count > fileLimit)
                 {
-                    fileLen += SparseFormat.CHUNK_HEADER_SIZE;
+                    fileLen += SparseFormat.ChunkHeaderSize;
                     var availableForData = fileLimit - fileLen;
                     var canSplit = lastIncludedIndex < 0 || availableForData > (fileLimit / 8);
 
@@ -1179,7 +1014,7 @@ public class SparseFile : IDisposable
 
             if (lastIncludedIndex < startIndex)
             {
-                throw new InvalidOperationException("无法将 Chunk 放入 SparseFile，请增加 maxFileSize。");
+                throw new InvalidOperationException("Cannot fit chunk into SparseFile, please increase maxFileSize.");
             }
 
             var currentFile = BuildResparseFile(entries, startIndex, lastIncludedIndex);
@@ -1195,31 +1030,31 @@ public class SparseFile : IDisposable
         var h1 = chunk.Header with { ChunkSize = blocksToTake };
         var h2 = chunk.Header with { ChunkSize = chunk.Header.ChunkSize - blocksToTake };
 
-        if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
+        if (chunk.Header.ChunkType == SparseFormat.ChunkTypeRaw)
         {
-            h1.TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + ((long)blocksToTake * Header.BlockSize));
-            h2.TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + ((long)h2.ChunkSize * Header.BlockSize));
+            h1 = h1 with { TotalSize = (uint)(SparseFormat.ChunkHeaderSize + ((long)blocksToTake * Header.BlockSize)) };
+            h2 = h2 with { TotalSize = (uint)(SparseFormat.ChunkHeaderSize + ((long)h2.ChunkSize * Header.BlockSize)) };
         }
-        else if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_FILL)
+        else if (chunk.Header.ChunkType == SparseFormat.ChunkTypeFill)
         {
-            h1.TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4;
-            h2.TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4;
+            h1 = h1 with { TotalSize = SparseFormat.ChunkHeaderSize + 4 };
+            h2 = h2 with { TotalSize = SparseFormat.ChunkHeaderSize + 4 };
         }
         else
         {
-            h1.TotalSize = SparseFormat.CHUNK_HEADER_SIZE;
-            h2.TotalSize = SparseFormat.CHUNK_HEADER_SIZE;
+            h1 = h1 with { TotalSize = SparseFormat.ChunkHeaderSize };
+            h2 = h2 with { TotalSize = SparseFormat.ChunkHeaderSize };
         }
 
         var part1 = new SparseChunk(h1);
         var part2 = new SparseChunk(h2);
 
-        if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW && chunk.DataProvider != null)
+        if (chunk.Header.ChunkType == SparseFormat.ChunkTypeRaw && chunk.DataProvider != null)
         {
             part1.DataProvider = chunk.DataProvider.GetSubProvider(0, (long)blocksToTake * Header.BlockSize);
             part2.DataProvider = chunk.DataProvider.GetSubProvider((long)blocksToTake * Header.BlockSize, (long)h2.ChunkSize * Header.BlockSize);
         }
-        else if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_FILL)
+        else if (chunk.Header.ChunkType == SparseFormat.ChunkTypeFill)
         {
             part1.FillValue = chunk.FillValue;
             part2.FillValue = chunk.FillValue;
@@ -1234,7 +1069,7 @@ public class SparseFile : IDisposable
         {
             Header = new SparseHeader
             {
-                Magic = SparseFormat.SPARSE_HEADER_MAGIC,
+                Magic = SparseFormat.SparseHeaderMagic,
                 MajorVersion = Header.MajorVersion,
                 MinorVersion = Header.MinorVersion,
                 FileHeaderSize = Header.FileHeaderSize,
@@ -1246,10 +1081,11 @@ public class SparseFile : IDisposable
 
     private void FinishCurrentResparseFile(SparseFile file)
     {
-        var header = file.Header;
-        header.TotalChunks = (uint)file.Chunks.Count;
-        header.TotalBlocks = (uint)file.Chunks.Sum(c => c.Header.ChunkSize);
-        file.Header = header;
+        file.Header = file.Header with
+        {
+            TotalChunks = (uint)file.Chunks.Count,
+            TotalBlocks = (uint)file.Chunks.Sum(c => c.Header.ChunkSize)
+        };
     }
 
     private sealed class ResparseEntry(uint startBlock, SparseChunk chunk)
@@ -1267,8 +1103,8 @@ public class SparseFile : IDisposable
         {
             switch (chunk.Header.ChunkType)
             {
-                case SparseFormat.CHUNK_TYPE_RAW:
-                case SparseFormat.CHUNK_TYPE_FILL:
+                case SparseFormat.ChunkTypeRaw:
+                case SparseFormat.ChunkTypeFill:
                     entries.Add(new ResparseEntry(currentBlock, chunk));
                     break;
                 default:
@@ -1285,9 +1121,9 @@ public class SparseFile : IDisposable
     {
         return chunk.Header.ChunkType switch
         {
-            SparseFormat.CHUNK_TYPE_RAW => SparseFormat.CHUNK_HEADER_SIZE + ((long)chunk.Header.ChunkSize * Header.BlockSize),
-            SparseFormat.CHUNK_TYPE_FILL => SparseFormat.CHUNK_HEADER_SIZE + 4,
-            _ => SparseFormat.CHUNK_HEADER_SIZE
+            SparseFormat.ChunkTypeRaw => SparseFormat.ChunkHeaderSize + ((long)chunk.Header.ChunkSize * Header.BlockSize),
+            SparseFormat.ChunkTypeFill => SparseFormat.ChunkHeaderSize + 4,
+            _ => SparseFormat.ChunkHeaderSize
         };
     }
 
@@ -1295,10 +1131,10 @@ public class SparseFile : IDisposable
     {
         return new SparseChunk(new ChunkHeader
         {
-            ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+            ChunkType = SparseFormat.ChunkTypeDontCare,
             Reserved = 0,
             ChunkSize = blocks,
-            TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+            TotalSize = SparseFormat.ChunkHeaderSize
         });
     }
 
@@ -1340,15 +1176,15 @@ public class SparseFile : IDisposable
     }
 
     /// <summary>
-    /// 遍历所有包含数据的 Chunk (RAW/FILL)（对齐 libsparse 的 sparse_file_foreach_chunk）
+    /// Traverses all chunks containing data (RAW/FILL) (aligns with libsparse's sparse_file_foreach_chunk)
     /// </summary>
     public void ForeachChunk(Action<SparseChunk, uint, uint> action)
     {
         uint currentBlock = 0;
         foreach (var chunk in Chunks)
         {
-            if (chunk.Header.ChunkType is SparseFormat.CHUNK_TYPE_RAW or
-                SparseFormat.CHUNK_TYPE_FILL)
+            if (chunk.Header.ChunkType is SparseFormat.ChunkTypeRaw or
+                SparseFormat.ChunkTypeFill)
             {
                 action(chunk, currentBlock, chunk.Header.ChunkSize);
             }
@@ -1357,7 +1193,7 @@ public class SparseFile : IDisposable
     }
 
     /// <summary>
-    /// 遍历所有 Chunk，包括 DONT_CARE
+    /// Traverses all chunks, including DONT_CARE
     /// </summary>
     public void ForeachChunkAll(Action<SparseChunk, uint, uint> action)
     {
@@ -1370,7 +1206,7 @@ public class SparseFile : IDisposable
     }
 
     /// <summary>
-    /// 获取如果写入磁盘时的长度（对齐 libsparse 的 sparse_file_len）
+    /// Gets the length when written to disk (aligns with libsparse's sparse_file_len)
     /// </summary>
     public long GetLength(bool sparse, bool includeCrc)
     {
@@ -1379,7 +1215,7 @@ public class SparseFile : IDisposable
             return (long)Header.TotalBlocks * Header.BlockSize;
         }
 
-        long length = SparseFormat.SPARSE_HEADER_SIZE;
+        long length = SparseFormat.SparseHeaderSize;
         foreach (var chunk in Chunks)
         {
             length += chunk.Header.TotalSize;
@@ -1388,19 +1224,19 @@ public class SparseFile : IDisposable
         var sumBlocks = (uint)Chunks.Sum(c => c.Header.ChunkSize);
         if (Header.TotalBlocks > sumBlocks)
         {
-            length += SparseFormat.CHUNK_HEADER_SIZE;
+            length += SparseFormat.ChunkHeaderSize;
         }
 
         if (includeCrc)
         {
-            length += SparseFormat.CHUNK_HEADER_SIZE + 4;
+            length += SparseFormat.ChunkHeaderSize + 4;
         }
 
         return length;
     }
 
     /// <summary>
-    /// 智能导入：自动判断是 Sparse 还是 Raw 镜像（对齐 libsparse 的 sparse_file_import_auto）
+    /// Smart import: automatically determines if it's a Sparse or Raw image (aligns with libsparse's sparse_file_import_auto)
     /// </summary>
     public static SparseFile ImportAuto(string filePath, bool validateCrc = false, bool verbose = false)
     {
@@ -1409,7 +1245,7 @@ public class SparseFile : IDisposable
     }
 
     /// <summary>
-    /// 智能导入：通过流自动判断（对齐 libsparse 的 sparse_file_import_auto）
+    /// Smart import: automatically determines via stream (aligns with libsparse's sparse_file_import_auto)
     /// </summary>
     public static SparseFile ImportAuto(Stream stream, bool validateCrc = false, bool verbose = false, string? filePath = null)
     {
@@ -1423,7 +1259,7 @@ public class SparseFile : IDisposable
                 stream.Seek(pos, SeekOrigin.Begin);
             }
 
-            if (magic == SparseFormat.SPARSE_HEADER_MAGIC)
+            if (magic == SparseFormat.SparseHeaderMagic)
             {
                 return FromStreamInternal(stream, filePath, validateCrc, verbose);
             }
@@ -1434,14 +1270,14 @@ public class SparseFile : IDisposable
             return FromRawFile(filePath, 4096, verbose);
         }
 
-        // 如果没有提供路径且不是 Sparse，则作为 Raw 流处理
+        // If no path is provided and it's not Sparse, treat it as a Raw stream
         var rawFile = new SparseFile(4096, stream.Length, verbose);
         rawFile.ReadFromStream(stream, SparseReadMode.Normal);
         return rawFile;
     }
 
     /// <summary>
-    /// 从原始文件读取并稀疏化（对齐 libsparse 的 sparse_file_read）
+    /// Reads from a raw file and sparsifies it (aligns with libsparse's sparse_file_read)
     /// </summary>
     public static SparseFile FromRawFile(string filePath, uint blockSize = 4096, bool verbose = false)
     {
@@ -1453,51 +1289,51 @@ public class SparseFile : IDisposable
     }
 
     /// <summary>
-    /// 从流中读取并稀疏化或解析 Sparse 格式（对齐 libsparse 的 sparse_file_read）
+    /// Reads from a stream and sparsifies it or parses the Sparse format (aligns with libsparse's sparse_file_read)
     /// </summary>
     public void ReadFromStream(Stream stream, SparseReadMode mode, bool validateCrc = false)
     {
         if (mode == SparseReadMode.Sparse)
         {
-            var headerData = new byte[SparseFormat.SPARSE_HEADER_SIZE];
+            var headerData = new byte[SparseFormat.SparseHeaderSize];
             if (stream.Read(headerData, 0, headerData.Length) != headerData.Length)
             {
-                throw new InvalidDataException("无法读取 sparse 文件头");
+                throw new InvalidDataException("Failed to read sparse header");
             }
 
             var importedHeader = SparseHeader.FromBytes(headerData);
             if (!importedHeader.IsValid())
             {
-                throw new InvalidDataException("无效的 sparse 文件头");
+                throw new InvalidDataException("Invalid sparse header");
             }
 
             if (Header.BlockSize != importedHeader.BlockSize)
             {
-                throw new ArgumentException("导入的 Sparse 文件块大小与当前文件不匹配");
+                throw new ArgumentException("Imported sparse file block size does not match the current file");
             }
 
             if (Verbose)
             {
-                SparseLogger.Info($"ReadFromStream (Sparse模式): BlockSize={importedHeader.BlockSize}, TotalBlocks={importedHeader.TotalBlocks}, TotalChunks={importedHeader.TotalChunks}");
+                SparseLogger.Info($"ReadFromStream (Sparse mode): BlockSize={importedHeader.BlockSize}, TotalBlocks={importedHeader.TotalBlocks}, TotalChunks={importedHeader.TotalChunks}");
             }
 
-            stream.Seek(importedHeader.FileHeaderSize - SparseFormat.SPARSE_HEADER_SIZE, SeekOrigin.Current);
+            stream.Seek(importedHeader.FileHeaderSize - SparseFormat.SparseHeaderSize, SeekOrigin.Current);
 
             var checksum = Crc32.Begin();
             var currentBlockStart = CurrentBlock;
 
             for (uint i = 0; i < importedHeader.TotalChunks; i++)
             {
-                var chunkHeaderData = new byte[SparseFormat.CHUNK_HEADER_SIZE];
+                var chunkHeaderData = new byte[SparseFormat.ChunkHeaderSize];
                 stream.ReadExactly(chunkHeaderData, 0, chunkHeaderData.Length);
                 var chunkHeader = ChunkHeader.FromBytes(chunkHeaderData);
 
                 if (Verbose)
                 {
-                    SparseLogger.Info($"导入 Chunk #{i}: 类型=0x{chunkHeader.ChunkType:X4}, 大小={chunkHeader.ChunkSize} blocks");
+                    SparseLogger.Info($"Imported Chunk #{i}: Type=0x{chunkHeader.ChunkType:X4}, Size={chunkHeader.ChunkSize} blocks");
                 }
 
-                stream.Seek(importedHeader.ChunkHeaderSize - SparseFormat.CHUNK_HEADER_SIZE, SeekOrigin.Current);
+                stream.Seek(importedHeader.ChunkHeaderSize - SparseFormat.ChunkHeaderSize, SeekOrigin.Current);
 
                 var dataSize = (long)chunkHeader.TotalSize - importedHeader.ChunkHeaderSize;
                 var expectedRawSize = (long)chunkHeader.ChunkSize * Header.BlockSize;
@@ -1506,7 +1342,7 @@ public class SparseFile : IDisposable
 
                 switch (chunkHeader.ChunkType)
                 {
-                    case SparseFormat.CHUNK_TYPE_RAW:
+                    case SparseFormat.ChunkTypeRaw:
                         var rawData = new byte[dataSize];
                         stream.ReadExactly(rawData, 0, (int)dataSize);
                         if (validateCrc)
@@ -1517,13 +1353,13 @@ public class SparseFile : IDisposable
                         Chunks.Add(chunk);
                         currentBlockStart += chunkHeader.ChunkSize;
                         break;
-                    case SparseFormat.CHUNK_TYPE_FILL:
+                    case SparseFormat.ChunkTypeFill:
                         var fillData = new byte[4];
                         stream.ReadExactly(fillData, 0, 4);
                         var fillValue = BinaryPrimitives.ReadUInt32LittleEndian(fillData);
                         if (validateCrc)
                         {
-                            // 简化 CRC 计算
+                            // Simplified CRC calculation
                             for (var j = 0; j < expectedRawSize / 4; j++)
                             {
                                 checksum = Crc32.Update(checksum, fillData);
@@ -1537,7 +1373,7 @@ public class SparseFile : IDisposable
                             stream.Seek(dataSize - 4, SeekOrigin.Current);
                         }
                         break;
-                    case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                    case SparseFormat.ChunkTypeDontCare:
                         if (validateCrc)
                         {
                             var zero4 = new byte[4];
@@ -1549,7 +1385,7 @@ public class SparseFile : IDisposable
                         Chunks.Add(chunk);
                         currentBlockStart += chunkHeader.ChunkSize;
                         break;
-                    case SparseFormat.CHUNK_TYPE_CRC32:
+                    case SparseFormat.ChunkTypeCrc32:
                         var crcFileData = new byte[4];
                         stream.ReadExactly(crcFileData, 0, 4);
                         if (validateCrc)
@@ -1557,7 +1393,7 @@ public class SparseFile : IDisposable
                             var fileCrc = BinaryPrimitives.ReadUInt32LittleEndian(crcFileData);
                             if (fileCrc != Crc32.Finish(checksum))
                             {
-                                throw new InvalidDataException("CRC32 校验失败");
+                                throw new InvalidDataException("CRC32 validation failed");
                             }
                         }
                         break;
@@ -1568,7 +1404,7 @@ public class SparseFile : IDisposable
             return;
         }
 
-        // Normal 或 Hole 模式：扫描流并进行稀疏化
+        // Normal or Hole mode: scan stream and sparsify
         var blockSize = Header.BlockSize;
         var bufferScan = new byte[blockSize];
         long currentPos = 0;

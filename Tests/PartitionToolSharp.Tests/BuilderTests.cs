@@ -103,6 +103,6 @@ public class BuilderTests
 
         Assert.NotNull(sparseFile);
         Assert.Equal(DeviceSize / 4096, sparseFile.Header.TotalBlocks);
-        Assert.Contains(sparseFile.Chunks, c => c.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW);
+        Assert.Contains(sparseFile.Chunks, c => c.Header.ChunkType == SparseFormat.ChunkTypeRaw);
     }
 }

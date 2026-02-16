@@ -13,7 +13,7 @@
     <PackageReference Include="Google.Protobuf.Tools" Version="3.29.3" />
   </ItemGroup>
 
-  <!-- 自动编译当前目录下的所有 .proto 文件 -->
+  <!-- 自动编译当前目录下的所�?.proto 文件 -->
   <ItemGroup>
     <Protobuf Include="**/*.proto" GrpcServices="None" />
   </ItemGroup>

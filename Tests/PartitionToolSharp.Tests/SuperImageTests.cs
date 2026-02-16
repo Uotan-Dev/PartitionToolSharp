@@ -35,7 +35,7 @@ public class SuperImageTests
         try
         {
             var header = SparseFile.PeekHeader(superPath);
-            if (header.Magic == SparseFormat.SPARSE_HEADER_MAGIC)
+            if (header.Magic == SparseFormat.SparseHeaderMagic)
             {
                 isSparse = true;
             }
@@ -86,7 +86,7 @@ public class SuperImageTests
         try
         {
             var header = SparseFile.PeekHeader(superPath);
-            isSparse = header.Magic == SparseFormat.SPARSE_HEADER_MAGIC;
+            isSparse = header.Magic == SparseFormat.SparseHeaderMagic;
         }
         catch { }
 
@@ -113,7 +113,7 @@ public class SuperImageTests
         try
         {
             var header = SparseFile.PeekHeader(superPath);
-            isSparse = header.Magic == SparseFormat.SPARSE_HEADER_MAGIC;
+            isSparse = header.Magic == SparseFormat.SparseHeaderMagic;
         }
         catch { }
 

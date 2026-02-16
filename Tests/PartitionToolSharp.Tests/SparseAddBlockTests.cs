@@ -20,7 +20,7 @@ public class SparseAddBlockTests
 
         // Chunks 应包含: [RAW(1)], [DONT_CARE(9)], [FILL(1)]
         Assert.Equal(3, sparseFile.Chunks.Count);
-        Assert.Equal(SparseFormat.CHUNK_TYPE_DONT_CARE, sparseFile.Chunks[1].Header.ChunkType);
+        Assert.Equal(SparseFormat.ChunkTypeDontCare, sparseFile.Chunks[1].Header.ChunkType);
         Assert.Equal(9u, sparseFile.Chunks[1].Header.ChunkSize);
         Assert.Equal(11u, sparseFile.CurrentBlock);
     }

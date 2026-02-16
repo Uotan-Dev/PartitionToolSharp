@@ -3,10 +3,11 @@ using Microsoft.Win32.SafeHandles;
 
 namespace LibSparseSharp;
 
-public static class SparseFileNativeHelper
+public static partial class SparseFileNativeHelper
 {
-    [DllImport("Kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-    private static extern bool DeviceIoControl(
+    [LibraryImport("Kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool DeviceIoControl(
         SafeFileHandle hDevice,
         uint dwIoControlCode,
         IntPtr lpInBuffer,
@@ -19,7 +20,7 @@ public static class SparseFileNativeHelper
     private const uint FSCTL_SET_SPARSE = 0x000900C4;
 
     /// <summary>
-    /// 在 Windows 上将文件标记为稀疏文件，类似于 Linux 的稀疏文件支持
+    /// ? Windows ???????????
     /// </summary>
     public static void MarkAsSparse(FileStream fs)
     {

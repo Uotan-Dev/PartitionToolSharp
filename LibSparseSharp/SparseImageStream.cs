@@ -17,7 +17,7 @@ public class SparseImageStream : Stream
         public long StartByteOffset;
         public long Length;
         public SectionType Type;
-        public int ChunkIndex; // 仅对 ChunkHeader 和 ChunkData 有效
+        public int ChunkIndex; // 仅对 ChunkHeader �?ChunkData 有效
         public byte[]? StaticData; // 用于 Header 缓存
     }
 
@@ -33,11 +33,11 @@ public class SparseImageStream : Stream
     /// <summary>
     /// 构造映射流
     /// </summary>
-    /// <param name="source">源 SparseFile</param>
-    /// <param name="startBlock">映射起始块（绝对位置）</param>
-    /// <param name="blockCount">本流包含的有效数据块数</param>
-    /// <param name="includeCrc">是否包含 CRC32 校验块</param>
-    /// <param name="fullRange">是否在 header 中声明全量 TotalBlocks 并使用 skip 补齐起始/尾部（Resparse 用）</param>
+    /// <param name="source">�?SparseFile</param>
+    /// <param name="startBlock">映射起始块（绝对位置�?/param>
+    /// <param name="blockCount">本流包含的有效数据块�?/param>
+    /// <param name="includeCrc">是否包含 CRC32 校验�?/param>
+    /// <param name="fullRange">是否�?header 中声明全�?TotalBlocks 并使�?skip 补齐起始/尾部（Resparse 用）</param>
     public SparseImageStream(SparseFile source, uint startBlock, uint blockCount, bool includeCrc = false, bool fullRange = true)
     {
         _blockSize = source.Header.BlockSize;
@@ -56,11 +56,11 @@ public class SparseImageStream : Stream
 
         var header = new SparseHeader
         {
-            Magic = SparseFormat.SPARSE_HEADER_MAGIC,
+            Magic = SparseFormat.SparseHeaderMagic,
             MajorVersion = source.Header.MajorVersion,
             MinorVersion = source.Header.MinorVersion,
-            FileHeaderSize = SparseFormat.SPARSE_HEADER_SIZE,
-            ChunkHeaderSize = SparseFormat.CHUNK_HEADER_SIZE,
+            FileHeaderSize = SparseFormat.SparseHeaderSize,
+            ChunkHeaderSize = SparseFormat.ChunkHeaderSize,
             BlockSize = _blockSize,
             TotalBlocks = fullRange ? source.Header.TotalBlocks : blockCount,
             TotalChunks = totalChunks,
@@ -84,14 +84,14 @@ public class SparseImageStream : Stream
             _sections.Add(new Section
             {
                 StartByteOffset = currentByteOffset,
-                Length = SparseFormat.CHUNK_HEADER_SIZE,
+                Length = SparseFormat.ChunkHeaderSize,
                 Type = SectionType.ChunkHeader,
                 ChunkIndex = i,
                 StaticData = chunkHeaderBytes
             });
-            currentByteOffset += SparseFormat.CHUNK_HEADER_SIZE;
+            currentByteOffset += SparseFormat.ChunkHeaderSize;
 
-            var dataSize = (long)chunk.Header.TotalSize - SparseFormat.CHUNK_HEADER_SIZE;
+            var dataSize = (long)chunk.Header.TotalSize - SparseFormat.ChunkHeaderSize;
             if (dataSize > 0)
             {
                 _sections.Add(new Section
@@ -109,10 +109,10 @@ public class SparseImageStream : Stream
         {
             var crcHeader = new ChunkHeader
             {
-                ChunkType = SparseFormat.CHUNK_TYPE_CRC32,
+                ChunkType = SparseFormat.ChunkTypeCrc32,
                 Reserved = 0,
                 ChunkSize = 0,
-                TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4
+                TotalSize = SparseFormat.ChunkHeaderSize + 4
             };
             var crcHeaderBytes = crcHeader.ToBytes();
             _sections.Add(new Section
@@ -148,7 +148,7 @@ public class SparseImageStream : Stream
             var totalBytes = (long)chunk.Header.ChunkSize * _blockSize;
             switch (chunk.Header.ChunkType)
             {
-                case SparseFormat.CHUNK_TYPE_RAW:
+                case SparseFormat.ChunkTypeRaw:
                     if (chunk.DataProvider != null)
                     {
                         long offset = 0;
@@ -178,7 +178,7 @@ public class SparseImageStream : Stream
                     }
                     break;
 
-                case SparseFormat.CHUNK_TYPE_FILL:
+                case SparseFormat.ChunkTypeFill:
                     var fillValData = BitConverter.GetBytes(chunk.FillValue);
                     // 填充缓冲区以进行批量 CRC
                     for (var i = 0; i <= buffer.Length - 4; i += 4)
@@ -195,7 +195,7 @@ public class SparseImageStream : Stream
                     }
                     break;
 
-                case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                case SparseFormat.ChunkTypeDontCare:
                     Array.Clear(buffer, 0, buffer.Length); // 重用并清零缓冲区
                     long processedZero = 0;
                     while (processedZero < totalBytes)
@@ -218,9 +218,9 @@ public class SparseImageStream : Stream
         {
             _mappedChunks.Add(new SparseChunk(new ChunkHeader
             {
-                ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                ChunkType = SparseFormat.ChunkTypeDontCare,
                 ChunkSize = startBlock,
-                TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+                TotalSize = SparseFormat.ChunkHeaderSize
             }));
         }
 
@@ -252,9 +252,9 @@ public class SparseImageStream : Stream
         {
             _mappedChunks.Add(new SparseChunk(new ChunkHeader
             {
-                ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                ChunkType = SparseFormat.ChunkTypeDontCare,
                 ChunkSize = source.Header.TotalBlocks - endBlock,
-                TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+                TotalSize = SparseFormat.ChunkHeaderSize
             }));
         }
     }
@@ -265,13 +265,13 @@ public class SparseImageStream : Stream
         header.ChunkSize = count;
 
 
-        header.TotalSize = header.ChunkType == SparseFormat.CHUNK_TYPE_RAW
-            ? SparseFormat.CHUNK_HEADER_SIZE + (count * _blockSize)
-            : header.ChunkType == SparseFormat.CHUNK_TYPE_FILL ? SparseFormat.CHUNK_HEADER_SIZE + 4 : (uint)SparseFormat.CHUNK_HEADER_SIZE;
+        header.TotalSize = header.ChunkType == SparseFormat.ChunkTypeRaw
+            ? SparseFormat.ChunkHeaderSize + (count * _blockSize)
+            : header.ChunkType == SparseFormat.ChunkTypeFill ? SparseFormat.ChunkHeaderSize + 4 : (uint)SparseFormat.ChunkHeaderSize;
 
         var newChunk = new SparseChunk(header) { FillValue = original.FillValue };
 
-        if (original.DataProvider != null && header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
+        if (original.DataProvider != null && header.ChunkType == SparseFormat.ChunkTypeRaw)
         {
             newChunk.DataProvider = new SubDataProvider(original.DataProvider, (long)offsetInBlocks * _blockSize, (long)count * _blockSize);
         }
@@ -304,11 +304,11 @@ public class SparseImageStream : Stream
 
                 case SectionType.ChunkData:
                     var chunk = _mappedChunks[section.ChunkIndex];
-                    if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
+                    if (chunk.Header.ChunkType == SparseFormat.ChunkTypeRaw)
                     {
                         chunk.DataProvider?.Read(offsetInSection, buffer, offset + totalRead, toRead);
                     }
-                    else if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_FILL)
+                    else if (chunk.Header.ChunkType == SparseFormat.ChunkTypeFill)
                     {
                         var fillValue = chunk.FillValue;
                         for (var i = 0; i < toRead; i++)
