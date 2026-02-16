@@ -2,9 +2,6 @@ using System.Buffers.Binary;
 
 namespace LibSparseSharp;
 
-/// <summary>
-/// Android sparse 镜像格式定义
-/// </summary>
 public static class SparseFormat
 {
     public const uint SPARSE_HEADER_MAGIC = 0xed26ff3a;
@@ -17,27 +14,20 @@ public static class SparseFormat
     public const ushort SPARSE_HEADER_SIZE = 28;
     public const ushort CHUNK_HEADER_SIZE = 12;
 
-    /// <summary>
-    /// 单个 Chunk 处理的最大数据大小（避免 32-bit TotalSize 溢出，并保持与 libsparse 兼容）
-    /// </summary>
-    public const uint MAX_CHUNK_DATA_SIZE = 64 * 1024 * 1024; // 64MB
+    public const uint MAX_CHUNK_DATA_SIZE = 64 * 1024 * 1024;
 }
 
-/// <summary>
-/// Sparse 文件头结构
-/// </summary>
 public struct SparseHeader
 {
-    // 引用自 libsparse 的结构定义
-    public uint Magic;           // 0xed26ff3a
-    public ushort MajorVersion;  // (0x1) - 若主版本更高则不解析该镜像
-    public ushort MinorVersion;  // (0x0) - 允许更高的次版本
-    public ushort FileHeaderSize; // 第一版格式的文件头大小为 28 字节
-    public ushort ChunkHeaderSize; // 第一版格式的 Chunk 头大小为 12 字节
-    public uint BlockSize;       // 块大小（字节），必须是 4 的倍数（通常为 4096）
-    public uint TotalBlocks;     // 输出镜像的总块数
-    public uint TotalChunks;     // 输入镜像的总 Chunk 数
-    public uint ImageChecksum;   // 原始数据的 CRC32 校验和
+    public uint Magic;
+    public ushort MajorVersion;
+    public ushort MinorVersion;
+    public ushort FileHeaderSize;
+    public ushort ChunkHeaderSize;
+    public uint BlockSize;
+    public uint TotalBlocks;
+    public uint TotalChunks;
+    public uint ImageChecksum;
 
     public static SparseHeader FromBytes(byte[] data)
     {
@@ -85,15 +75,12 @@ public struct SparseHeader
     }
 }
 
-/// <summary>
-/// Chunk 头结构
-/// </summary>
 public struct ChunkHeader
 {
-    public ushort ChunkType;     // 0xCAC1 -> 原始数据; 0xCAC2 -> 填充; 0xCAC3 -> 忽略
-    public ushort Reserved;      // 预留字段
-    public uint ChunkSize;       // 在输出镜像中的块数
-    public uint TotalSize;       // 输入文件中该 Chunk 的总字节数（含头和数据）
+    public ushort ChunkType;
+    public ushort Reserved;
+    public uint ChunkSize;
+    public uint TotalSize;
 
     public static ChunkHeader FromBytes(byte[] data)
     {

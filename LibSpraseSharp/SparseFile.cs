@@ -1,11 +1,7 @@
 using System.Buffers.Binary;
-using System.Runtime.InteropServices;
 
 namespace LibSparseSharp;
 
-/// <summary>
-/// 数据提供者接口，用于抽象内存数据和文件数据
-/// </summary>
 public interface ISparseDataProvider : IDisposable
 {
     long Length { get; }
@@ -49,7 +45,7 @@ public class FileDataProvider(string filePath, long offset, long length) : ISpar
     {
         using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         fs.Seek(offset, SeekOrigin.Begin);
-        var buffer = new byte[1024 * 1024]; // 1MB 缓冲区
+        var buffer = new byte[1024 * 1024];
         var remaining = length;
         while (remaining > 0)
         {
@@ -82,9 +78,6 @@ public class FileDataProvider(string filePath, long offset, long length) : ISpar
     public void Dispose() { }
 }
 
-/// <summary>
-/// Sparse块数据结构
-/// </summary>
 public class SparseChunk(ChunkHeader header) : IDisposable
 {
     public ChunkHeader Header { get; set; } = header;
@@ -94,14 +87,8 @@ public class SparseChunk(ChunkHeader header) : IDisposable
     public void Dispose() => DataProvider?.Dispose();
 }
 
-/// <summary>
-/// Sparse文件结构
-/// </summary>
 public class SparseFile : IDisposable
 {
-    /// <summary>
-    /// 只读取sparse文件头部信息（不解析 chunk）
-    /// </summary>
     public static SparseHeader PeekHeader(string filePath)
     {
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
@@ -133,14 +120,8 @@ public class SparseFile : IDisposable
         };
     }
 
-    /// <summary>
-    /// 从文件流读取sparse文件
-    /// </summary>
     public static SparseFile FromStream(Stream stream, bool validateCrc = false) => FromStreamInternal(stream, null, validateCrc);
 
-    /// <summary>
-    /// 从文件路径读取sparse文件（推荐，支持大型文件的按需读取）
-    /// </summary>
     public static SparseFile FromImageFile(string filePath, bool validateCrc = false)
     {
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -149,7 +130,6 @@ public class SparseFile : IDisposable
 
     private static SparseFile FromStreamInternal(Stream stream, string? filePath, bool validateCrc)
     {
-        SparseLogger.Info("正在解析 Sparse 文件头...");
         var sparseFile = new SparseFile();
         var headerData = new byte[SparseFormat.SPARSE_HEADER_SIZE];
         if (stream.Read(headerData, 0, headerData.Length) != headerData.Length)
@@ -164,10 +144,6 @@ public class SparseFile : IDisposable
             throw new InvalidDataException("无效的 sparse 文件头");
         }
 
-        SparseLogger.Info($"Sparse 文件解析: 版本 {sparseFile.Header.MajorVersion}.{sparseFile.Header.MinorVersion}, " +
-                          $"Chunk 总数: {sparseFile.Header.TotalChunks}, 总块数: {sparseFile.Header.TotalBlocks}");
-
-        // 如果文件头比标准大小大，跳过额外部分
         if (sparseFile.Header.FileHeaderSize > SparseFormat.SPARSE_HEADER_SIZE)
         {
             stream.Seek(sparseFile.Header.FileHeaderSize - SparseFormat.SPARSE_HEADER_SIZE, SeekOrigin.Current);
@@ -178,11 +154,6 @@ public class SparseFile : IDisposable
 
         for (uint i = 0; i < sparseFile.Header.TotalChunks; i++)
         {
-            if (i % 500 == 0 && i > 0)
-            {
-                SparseLogger.Info($"正在加载第 {i}/{sparseFile.Header.TotalChunks} 个 Chunk...");
-            }
-
             var chunkHeaderData = new byte[SparseFormat.CHUNK_HEADER_SIZE];
             if (stream.Read(chunkHeaderData, 0, chunkHeaderData.Length) != chunkHeaderData.Length)
             {
@@ -191,7 +162,6 @@ public class SparseFile : IDisposable
 
             var chunkHeader = ChunkHeader.FromBytes(chunkHeaderData);
 
-            // 如果 Chunk 头比标准大小大，跳过额外部分
             if (sparseFile.Header.ChunkHeaderSize > SparseFormat.CHUNK_HEADER_SIZE)
             {
                 stream.Seek(sparseFile.Header.ChunkHeaderSize - SparseFormat.CHUNK_HEADER_SIZE, SeekOrigin.Current);
@@ -229,17 +199,12 @@ public class SparseFile : IDisposable
                             remaining -= toRead;
                         }
 
-                        // 如果需要保留数据且已知路径，则重新定位（因为校验已经读过了）
                         if (filePath != null)
                         {
                             chunk.DataProvider = new FileDataProvider(filePath, stream.Position - dataSize, dataSize);
                         }
                         else
                         {
-                            // 校验通过后，由于流已读取，数据已经在 checksum 过程中处理过
-                            // 如果是从流创建且需要数据，则必须在校验时缓存。
-                            // 为了内存安全，如果 validateCrc 为 true 且 filePath 为 null，我们目前只能重新读入内存
-                            // 或者警告不支持在大流上进行内存校验。
                             stream.Seek(-dataSize, SeekOrigin.Current);
                             var rawData = new byte[dataSize];
                             if (stream.Read(rawData, 0, (int)dataSize) != (int)dataSize)
@@ -251,13 +216,11 @@ public class SparseFile : IDisposable
                     }
                     else if (filePath != null)
                     {
-                        // 使用 FileDataProvider 进行按需读取，不占用内存
                         chunk.DataProvider = new FileDataProvider(filePath, stream.Position, dataSize);
                         stream.Seek(dataSize, SeekOrigin.Current);
                     }
                     else
                     {
-                        // 降级为内存读取
                         if (dataSize > int.MaxValue)
                         {
                             throw new NotSupportedException($"第 {i} 个 chunk 的原始数据太大 ({dataSize} 字节)，超过了内存缓冲区限制。");
@@ -289,7 +252,6 @@ public class SparseFile : IDisposable
                     {
                         var valBytes = new byte[4];
                         BinaryPrimitives.WriteUInt32LittleEndian(valBytes, chunk.FillValue);
-                        // 填充 buffer 以进行快速 CRC 工作
                         for (var j = 0; j <= buffer.Length - 4; j += 4)
                         {
                             Array.Copy(valBytes, 0, buffer, j, 4);
@@ -377,7 +339,6 @@ public class SparseFile : IDisposable
         var outHeader = Header;
         var sumBlocks = (uint)Chunks.Sum(c => (long)c.Header.ChunkSize);
 
-        // 如果 Chunks 中定义的块数不足 Header.TotalBlocks，则需要补齐一个 DONT_CARE 块
         var needsTrailingSkip = outHeader.TotalBlocks > sumBlocks;
 
         var totalChunks = (uint)Chunks.Count;
@@ -387,11 +348,10 @@ public class SparseFile : IDisposable
         }
         if (includeCrc)
         {
-            totalChunks++; // 为 CRC chunk 预留空间
+            totalChunks++;
         }
 
         outHeader.TotalChunks = totalChunks;
-        // 如果 Chunks 中定义的块数超过了 Header.TotalBlocks，则更新 TotalBlocks 以匹配实际大小
         if (sumBlocks > outHeader.TotalBlocks)
         {
             outHeader.TotalBlocks = sumBlocks;
@@ -433,7 +393,6 @@ public class SparseFile : IDisposable
                             providerOffset += read;
                         }
 
-                        // 如果提供的数据不足一个块大小的整数倍，填充 0
                         var padding = expectedDataSize - providerOffset;
                         if (padding > 0)
                         {
@@ -452,7 +411,6 @@ public class SparseFile : IDisposable
                     }
                     else
                     {
-                        // 如果缺少提供者但头部指示为 RAW，则填充 0
                         Array.Clear(buffer, 0, buffer.Length);
                         var remaining = expectedDataSize;
                         while (remaining > 0)
@@ -512,7 +470,6 @@ public class SparseFile : IDisposable
             }
         }
 
-        // 写入自动生成的尾部 skip 块
         if (needsTrailingSkip)
         {
             var skipSize = outHeader.TotalBlocks - sumBlocks;
@@ -554,7 +511,6 @@ public class SparseFile : IDisposable
             stream.Write(crcHeader.ToBytes(), 0, SparseFormat.CHUNK_HEADER_SIZE);
             stream.Write(finalCrcData, 0, 4);
 
-            // 更新流中的头部信息（回到开头）
             outHeader.ImageChecksum = finalChecksum;
             if (stream.CanSeek)
             {
@@ -566,11 +522,6 @@ public class SparseFile : IDisposable
         }
     }
 
-    /// <summary>
-    /// 将 SparseFile 写入为 Raw 镜像（解包/导出）
-    /// </summary>
-    /// <param name="stream">目标流</param>
-    /// <param name="sparseMode">如果为 true，对于 DONT_CARE 块尝试通过 Seek 跳过（如果流支持），否则写入 0。默认 false (写入全量镜像)</param>
     public void WriteRawToStream(Stream stream, bool sparseMode = false)
     {
         var buffer = new byte[1024 * 1024];
@@ -582,7 +533,6 @@ public class SparseFile : IDisposable
                 case SparseFormat.CHUNK_TYPE_RAW:
                     if (chunk.DataProvider != null)
                     {
-                        // 逻辑改为通过 DataProvider 写入，并自动处理长度不足的填充
                         long written = 0;
                         while (written < chunk.DataProvider.Length)
                         {
@@ -596,7 +546,6 @@ public class SparseFile : IDisposable
                             stream.Write(buffer, 0, read);
                             written += read;
                         }
-                        // 填充到块大小倍数
                         if (written < size)
                         {
                             Array.Clear(buffer, 0, (int)Math.Min(buffer.Length, size - written));
@@ -610,7 +559,6 @@ public class SparseFile : IDisposable
                     }
                     else
                     {
-                        // 缺失数据源
                         if (sparseMode && stream.CanSeek)
                         {
                             stream.Seek(size, SeekOrigin.Current);
@@ -666,7 +614,6 @@ public class SparseFile : IDisposable
             }
         }
 
-        // 确保文件长度达到预期
         var expectedFullLength = (long)Header.TotalBlocks * Header.BlockSize;
         if (stream.CanSeek && stream.Length < expectedFullLength)
         {
@@ -674,9 +621,6 @@ public class SparseFile : IDisposable
         }
     }
 
-    /// <summary>
-    /// 从文件路径添加原始数据块（Backed Block）
-    /// </summary>
     public void AddRawFileChunk(string filePath, long offset, uint size)
     {
         var blockSize = Header.BlockSize;
@@ -686,11 +630,10 @@ public class SparseFile : IDisposable
         while (remaining > 0)
         {
             var partSize = Math.Min(remaining, SparseFormat.MAX_CHUNK_DATA_SIZE);
-            // 尽量保持块对齐
             if (partSize < remaining && partSize % blockSize != 0)
             {
                 partSize = (partSize / blockSize) * blockSize;
-                if (partSize == 0) partSize = remaining; // 无法对齐则取剩余全部（虽然这不应该发生）
+                if (partSize == 0) partSize = remaining;
             }
 
             var chunkBlocks = (uint)((partSize + blockSize - 1) / blockSize);
@@ -713,9 +656,6 @@ public class SparseFile : IDisposable
         }
     }
 
-    /// <summary>
-    /// 添加内存原始数据块
-    /// </summary>
     public void AddRawChunk(byte[] data)
     {
         var blockSize = Header.BlockSize;
@@ -751,9 +691,6 @@ public class SparseFile : IDisposable
         }
     }
 
-    /// <summary>
-    /// 添加填充块
-    /// </summary>
     public void AddFillChunk(uint fillValue, long size)
     {
         var blockSize = Header.BlockSize;
@@ -761,13 +698,11 @@ public class SparseFile : IDisposable
 
         while (remaining > 0)
         {
-            var partSize = Math.Min(remaining, (long)SparseFormat.MAX_CHUNK_DATA_SIZE * blockSize); // 逻辑上限制块数以保持兼容
-            // 由于是填充块，其实只需要限制 ChunkSize 字段不要太大（uint32）
-            // 但为了刷机稳定性，我们也按 MAX_CHUNK_DATA_SIZE 大致对应的块数切分
-            var maxBlocksPerChunk = SparseFormat.MAX_CHUNK_DATA_SIZE / 4; // 这是一个保守值
+            var partSize = Math.Min(remaining, (long)SparseFormat.MAX_CHUNK_DATA_SIZE * blockSize);
+            var maxBlocksPerChunk = SparseFormat.MAX_CHUNK_DATA_SIZE / 4;
 
             var partBlocks = (uint)((partSize + blockSize - 1) / blockSize);
-            if (partBlocks > 0x00FFFFFF) partBlocks = 0x00FFFFFF; // 限制单个 chunk 的块数
+            if (partBlocks > 0x00FFFFFF) partBlocks = 0x00FFFFFF;
 
             var actualPartSize = (long)partBlocks * blockSize;
             if (actualPartSize > remaining) actualPartSize = remaining;
@@ -790,9 +725,6 @@ public class SparseFile : IDisposable
         }
     }
 
-    /// <summary>
-    /// 添加空数据块
-    /// </summary>
     public void AddDontCareChunk(long size)
     {
         var blockSize = Header.BlockSize;
@@ -800,7 +732,7 @@ public class SparseFile : IDisposable
 
         while (remaining > 0)
         {
-            var maxBlocksPerChunk = 0x00FFFFFFu; // 限制单个 skip chunk 的块数，避免某些解析器异常
+            var maxBlocksPerChunk = 0x00FFFFFFu;
             var partBlocks = (uint)((remaining + blockSize - 1) / blockSize);
             if (partBlocks > maxBlocksPerChunk) partBlocks = maxBlocksPerChunk;
 
@@ -828,14 +760,9 @@ public class SparseFile : IDisposable
         }
     }
 
-    /// <summary>
-    /// 将大的 SparseFile 拆分为多个不超过指定大小的 SparseFile (Resparse)
-    /// </summary>
     public List<SparseFile> Resparse(long maxFileSize)
     {
         var result = new List<SparseFile>();
-        // 与 libsparse 的 move_chunks_up_to_len 对齐：
-        // overhead = SparseHeader + 可能的尾部 skip header + CRC chunk
         long overhead = SparseFormat.SPARSE_HEADER_SIZE + (2 * SparseFormat.CHUNK_HEADER_SIZE) + 4;
 
         if (maxFileSize <= overhead)
@@ -933,7 +860,7 @@ public class SparseFile : IDisposable
             h1.TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4;
             h2.TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4;
         }
-        else // DONT_CARE
+        else
         {
             h1.TotalSize = SparseFormat.CHUNK_HEADER_SIZE;
             h2.TotalSize = SparseFormat.CHUNK_HEADER_SIZE;
@@ -1063,14 +990,8 @@ public class SparseFile : IDisposable
         return file;
     }
 
-    /// <summary>
-    /// 获取区块映射流
-    /// </summary>
     public Stream GetExportStream(uint startBlock, uint blockCount, bool includeCrc = false) => new SparseImageStream(this, startBlock, blockCount, includeCrc);
 
-    /// <summary>
-    /// 分割 SparseFile 为多个指定大小的流
-    /// </summary>
     public IEnumerable<Stream> GetResparsedStreams(long maxFileSize, bool includeCrc = false)
     {
         foreach (var file in Resparse(maxFileSize))
