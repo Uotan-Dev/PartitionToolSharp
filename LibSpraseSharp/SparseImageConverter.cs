@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using LibLpSharp;
 
 namespace LibSparseSharp;
@@ -39,7 +38,7 @@ public class SparseImageConverter
     public static void ConvertRawToSparse(string inputFile, string outputFile, uint blockSize = 4096)
     {
         using var outputStream = new FileStream(outputFile, FileMode.Create, FileAccess.Write);
-        using var sparseFile = CreateSparseFromFileRef(inputFile, blockSize);
+        using var sparseFile = SparseFile.FromRawFile(inputFile, blockSize);
         sparseFile.WriteToStream(outputStream);
     }
 
@@ -199,156 +198,5 @@ public class SparseImageConverter
             using var outStream = new FileStream(outPath, FileMode.Create, FileAccess.Write);
             files[i].WriteToStream(outStream, true); // 拆分后的镜像通常需要包含 CRC
         }
-    }
-
-    /// <summary>
-    /// 从原始文件创建sparse文件，使用文件引用避免大内存占用
-    /// </summary>
-    private static SparseFile CreateSparseFromFileRef(string inputPath, uint blockSize)
-    {
-        var fi = new FileInfo(inputPath);
-        var sparseFile = new SparseFile(blockSize, fi.Length);
-
-        using var fs = new FileStream(inputPath, FileMode.Open, FileAccess.Read);
-        var buffer = new byte[blockSize];
-        var totalLength = fi.Length;
-        long currentPos = 0;
-        long rawStart = -1;
-
-        while (currentPos < totalLength)
-        {
-            fs.Position = currentPos;
-            var bytesRead = fs.Read(buffer, 0, (int)Math.Min(blockSize, totalLength - currentPos));
-            if (bytesRead == 0)
-            {
-                break;
-            }
-
-            uint fillValue = 0;
-            var isZero = IsZeroBlock(buffer, bytesRead);
-            var isFill = !isZero && bytesRead == blockSize && IsFillBlock(buffer, out fillValue);
-
-            if (isZero || isFill)
-            {
-                if (rawStart != -1)
-                {
-                    sparseFile.AddRawFileChunk(inputPath, rawStart, (uint)(currentPos - rawStart));
-                    rawStart = -1;
-                }
-
-                if (isZero)
-                {
-                    var zeroStart = currentPos;
-                    currentPos += bytesRead;
-                    while (currentPos < totalLength)
-                    {
-                        var innerRead = fs.Read(buffer, 0, (int)Math.Min(blockSize, totalLength - currentPos));
-                        if (innerRead > 0 && IsZeroBlock(buffer, innerRead))
-                        {
-                            currentPos += innerRead;
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                    sparseFile.AddDontCareChunk((uint)(currentPos - zeroStart));
-                }
-                else
-                {
-                    var fillStart = currentPos;
-                    var currentFillValue = fillValue;
-                    currentPos += bytesRead;
-                    while (currentPos < totalLength)
-                    {
-                        var innerRead = fs.Read(buffer, 0, (int)Math.Min(blockSize, totalLength - currentPos));
-                        if (innerRead == blockSize && IsFillBlock(buffer, out var innerFill) && innerFill == currentFillValue)
-                        {
-                            currentPos += innerRead;
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                    sparseFile.AddFillChunk(currentFillValue, (uint)(currentPos - fillStart));
-                }
-            }
-            else
-            {
-                if (rawStart == -1)
-                {
-                    rawStart = currentPos;
-                }
-
-                currentPos += bytesRead;
-            }
-        }
-
-        if (rawStart != -1)
-        {
-            sparseFile.AddRawFileChunk(inputPath, rawStart, (uint)(currentPos - rawStart));
-        }
-
-        return sparseFile;
-    }
-
-    private static bool IsZeroBlock(byte[] buffer, int length)
-    {
-        if (length == 0)
-        {
-            return true;
-        }
-
-        var span = buffer.AsSpan(0, length);
-        var ulongSpan = MemoryMarshal.Cast<byte, ulong>(span);
-        foreach (var v in ulongSpan)
-        {
-            if (v != 0)
-            {
-                return false;
-            }
-        }
-
-        for (var i = ulongSpan.Length * 8; i < length; i++)
-        {
-            if (buffer[i] != 0)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsFillBlock(byte[] buffer, out uint fillValue)
-    {
-        fillValue = 0;
-        if (buffer.Length < 4)
-        {
-            return false;
-        }
-
-        var pattern = BitConverter.ToUInt32(buffer, 0);
-        var span = buffer.AsSpan();
-        var uintSpan = MemoryMarshal.Cast<byte, uint>(span);
-        foreach (var v in uintSpan)
-        {
-            if (v != pattern)
-            {
-                return false;
-            }
-        }
-
-        for (var i = uintSpan.Length * 4; i < buffer.Length; i++)
-        {
-            if (buffer[i] != (byte)(pattern >> (i % 4 * 8)))
-            {
-                return false;
-            }
-        }
-
-        fillValue = pattern;
-        return true;
     }
 }
