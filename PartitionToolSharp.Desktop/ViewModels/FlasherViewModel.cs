@@ -124,9 +124,9 @@ public partial class FlasherViewModel : ObservableObject
 
         Log("========================================");
         Log($"开始刷入操作:");
-        Log($"目标分区: {PartitionName}");
-        Log($"镜像来源: {(_directStream != null ? "[联动数据流]" : SelectedImagePath)}");
-        Log($"目标设备: {SelectedDevice}");
+        Log($"  目标分区: {PartitionName}");
+        Log($"  镜像来源: {(_directStream != null ? "[联动数据流]" : SelectedImagePath)}");
+        Log($"  目标设备: {SelectedDevice}");
         Log("========================================");
 
         try
@@ -145,17 +145,17 @@ public partial class FlasherViewModel : ObservableObject
 
                     if (!PartitionName.Equals("super", StringComparison.OrdinalIgnoreCase) && !isFastbootd)
                     {
-                        throw new Exception("刷入 super 内的分区需要设备处于 fastbootd 模式。请在设备上执行 'fastboot reboot fastboot'。");
+                        throw new Exception("刷入逻辑分区需要处于 fastbootd 模式。请在设备上执行 'fastboot reboot fastboot'。");
                     }
 
                     if (_directStream != null)
                     {
-                        Log($"> 正在从流上传数据 (大小: {_directStreamLength / 1024.0 / 1024.0:F2} MiB)...");
+                        Log($"> 正在从流上传数据 ({_directStreamLength / 1024.0 / 1024.0:F2} MiB)...");
                         fb.UploadData(_directStream);
                     }
                     else
                     {
-                        Log($"> 正在上传数据 (大小: {new FileInfo(SelectedImagePath).Length / 1024.0 / 1024.0:F2} MiB)...");
+                        Log($"> 正在从文件上传数据 ({new FileInfo(SelectedImagePath).Length / 1024.0 / 1024.0:F2} MiB)...");
                         fb.UploadData(SelectedImagePath);
                     }
 
@@ -183,7 +183,7 @@ public partial class FlasherViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            Log($"Flash Error: {ex.Message}");
+            Log($"刷入错误: {ex.Message}");
             await Ursa.Controls.MessageBox.ShowOverlayAsync($"刷入失败: {ex.Message}", "错误");
         }
         finally

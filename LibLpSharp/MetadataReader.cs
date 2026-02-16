@@ -76,12 +76,12 @@ public static class MetadataReader
             throw new InvalidDataException($"LpMetadataGeometry 结构大小超出缓冲区: {geometry.StructSize} > {buffer.Length}");
         }
 
-        // 验证校验和
+        // Verify checksum
         ReadOnlySpan<byte> originalChecksum = geometry.Checksum;
 
-        // 计算校验和之前先清零
+        // Zero out checksum before calculation
         var tempBuffer = buffer[..(int)geometry.StructSize].ToArray();
-        // 校验和位于偏移 8 处，长度为 32
+        // Checksum is at offset 8, length 32
         for (var i = 0; i < 32; i++)
         {
             tempBuffer[8 + i] = 0;
@@ -112,11 +112,11 @@ public static class MetadataReader
             throw new InvalidDataException("无效的 LpMetadataHeader 魔数");
         }
 
-        // 验证头部校验和
+        // Verify header checksum
         ReadOnlySpan<byte> originalHeaderChecksum = header.HeaderChecksum;
 
         var headerCopy = (byte[])headerBuffer.Clone();
-        // 校验和所在偏移为 12，将其清零
+        // Checksum is at offset 12, zero it before calculation
         for (var i = 0; i < 32; i++)
         {
             headerCopy[12 + i] = 0;
@@ -132,14 +132,14 @@ public static class MetadataReader
             }
         }
 
-        // 读取数据表
+        // Read tables
         var tablesBuffer = new byte[header.TablesSize];
         if (stream.Read(tablesBuffer, 0, tablesBuffer.Length) != tablesBuffer.Length)
         {
             throw new InvalidDataException("无法读取元数据表 (Metadata Tables)");
         }
 
-        // 验证表数据的校验和
+        // Verify tables checksum
         ReadOnlySpan<byte> originalTablesChecksum = header.TablesChecksum;
 
         var computedTables = sha256.ComputeHash(tablesBuffer);

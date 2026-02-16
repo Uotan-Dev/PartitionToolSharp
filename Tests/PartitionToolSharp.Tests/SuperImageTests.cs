@@ -24,14 +24,14 @@ public class SuperImageTests
         var superPath = GetSuperImgPath();
         if (!File.Exists(superPath))
         {
-            // 如果文件不存在，跳过测试（或根据需要报错）
+            // Skip test if file doesn't exist
             return;
         }
 
         LpMetadata metadata;
         var isSparse = false;
 
-        // 1. 测试是否为 sparse 格式并准备流
+        // 1. Check if it's sparse and prepare stream
         try
         {
             var header = SparseFile.PeekHeader(superPath);
