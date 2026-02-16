@@ -30,10 +30,7 @@ public class MemoryDataProvider(byte[] data, int offset = 0, int length = -1) : 
         return toCopy;
     }
 
-    public ISparseDataProvider GetSubProvider(long offset, long length)
-    {
-        return new MemoryDataProvider(data, _offset + (int)offset, (int)length);
-    }
+    public ISparseDataProvider GetSubProvider(long offset, long length) => new MemoryDataProvider(data, _offset + (int)offset, (int)length);
 
     public void Dispose() { }
 }

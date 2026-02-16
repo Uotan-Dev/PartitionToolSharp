@@ -1,3 +1,4 @@
+using Avalonia;
 using System;
 using System.Globalization;
 using Avalonia.Data.Converters;
@@ -8,5 +9,5 @@ public class EqualityConverter : IValueConverter
 {
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value != null && parameter != null && value.ToString() == parameter.ToString();
 
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => throw new NotImplementedException();
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => value is true ? parameter : AvaloniaProperty.UnsetValue;
 }
