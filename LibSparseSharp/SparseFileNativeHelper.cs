@@ -5,9 +5,9 @@ namespace LibSparseSharp;
 
 public static partial class SparseFileNativeHelper
 {
-    [LibraryImport("Kernel32.dll", SetLastError = true)]
+    [DllImport("Kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool DeviceIoControl(
+    private static extern bool DeviceIoControl(
         SafeFileHandle hDevice,
         uint dwIoControlCode,
         IntPtr lpInBuffer,

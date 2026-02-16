@@ -56,10 +56,10 @@ public static class MetadataReader
         throw new InvalidDataException("无法找到有效的 LpMetadataGeometry。镜像可能不是 super 镜像或已损坏。");
     }
 
-    public static unsafe void ParseGeometry(ReadOnlySpan<byte> buffer, out LpMetadataGeometry geometry)
+    public static void ParseGeometry(ReadOnlySpan<byte> buffer, out LpMetadataGeometry geometry)
     {
         geometry = default;
-        if (buffer.Length < sizeof(LpMetadataGeometry))
+        if (buffer.Length < System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataGeometry>())
         {
             throw new ArgumentException("数据长度不足以解析 LpMetadataGeometry");
         }
@@ -77,11 +77,7 @@ public static class MetadataReader
         }
 
         // 验证校验和
-        var originalChecksum = new byte[32];
-        fixed (byte* p = geometry.Checksum)
-        {
-            Marshal.Copy((IntPtr)p, originalChecksum, 0, 32);
-        }
+        ReadOnlySpan<byte> originalChecksum = geometry.Checksum;
 
         // 计算校验和之前先清零
         var tempBuffer = buffer[..(int)geometry.StructSize].ToArray();
@@ -102,9 +98,9 @@ public static class MetadataReader
         }
     }
 
-    public static unsafe LpMetadata ParseMetadata(LpMetadataGeometry geometry, Stream stream)
+    public static LpMetadata ParseMetadata(LpMetadataGeometry geometry, Stream stream)
     {
-        var headerBuffer = new byte[sizeof(LpMetadataHeader)];
+        var headerBuffer = new byte[System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataHeader>()];
         if (stream.Read(headerBuffer, 0, headerBuffer.Length) != headerBuffer.Length)
         {
             throw new InvalidDataException("无法读取 LpMetadataHeader");
@@ -117,11 +113,7 @@ public static class MetadataReader
         }
 
         // 验证头部校验和
-        var originalHeaderChecksum = new byte[32];
-        for (var i = 0; i < 32; i++)
-        {
-            originalHeaderChecksum[i] = header.HeaderChecksum[i];
-        }
+        ReadOnlySpan<byte> originalHeaderChecksum = header.HeaderChecksum;
 
         var headerCopy = (byte[])headerBuffer.Clone();
         // 校验和所在偏移为 12，将其清零
@@ -148,11 +140,7 @@ public static class MetadataReader
         }
 
         // 验证表数据的校验和
-        var originalTablesChecksum = new byte[32];
-        for (var i = 0; i < 32; i++)
-        {
-            originalTablesChecksum[i] = header.TablesChecksum[i];
-        }
+        ReadOnlySpan<byte> originalTablesChecksum = header.TablesChecksum;
 
         var computedTables = sha256.ComputeHash(tablesBuffer);
         for (var i = 0; i < 32; i++)
@@ -225,7 +213,7 @@ public static class MetadataReader
         return start + ((long)slotNumber * geometry.MetadataMaxSize);
     }
 
-    private static unsafe void ParseTable<T>(byte[] buffer, LpMetadataTableDescriptor desc, List<T> list) where T : unmanaged
+    private static void ParseTable<T>(byte[] buffer, LpMetadataTableDescriptor desc, List<T> list) where T : unmanaged
     {
         if (desc.NumEntries == 0)
         {
@@ -235,10 +223,7 @@ public static class MetadataReader
         for (uint i = 0; i < desc.NumEntries; i++)
         {
             var offset = (int)(desc.Offset + (i * desc.EntrySize));
-            fixed (byte* p = &buffer[offset])
-            {
-                list.Add(*(T*)p);
-            }
+            list.Add(MemoryMarshal.Read<T>(buffer.AsSpan(offset, (int)desc.EntrySize)));
         }
     }
 }

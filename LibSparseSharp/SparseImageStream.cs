@@ -261,13 +261,13 @@ public class SparseImageStream : Stream
 
     private SparseChunk CloneChunkSlice(SparseChunk original, uint offsetInBlocks, uint count)
     {
-        var header = original.Header;
-        header.ChunkSize = count;
-
-
-        header.TotalSize = header.ChunkType == SparseFormat.ChunkTypeRaw
-            ? SparseFormat.ChunkHeaderSize + (count * _blockSize)
-            : header.ChunkType == SparseFormat.ChunkTypeFill ? SparseFormat.ChunkHeaderSize + 4 : (uint)SparseFormat.ChunkHeaderSize;
+        var header = original.Header with
+        {
+            ChunkSize = count,
+            TotalSize = original.Header.ChunkType == SparseFormat.ChunkTypeRaw
+                ? SparseFormat.ChunkHeaderSize + (count * _blockSize)
+                : original.Header.ChunkType == SparseFormat.ChunkTypeFill ? SparseFormat.ChunkHeaderSize + 4 : (uint)SparseFormat.ChunkHeaderSize
+        };
 
         var newChunk = new SparseChunk(header) { FillValue = original.FillValue };
 

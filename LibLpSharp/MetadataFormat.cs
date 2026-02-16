@@ -3,6 +3,15 @@ using System.Text;
 
 namespace LibLpSharp;
 
+[System.Runtime.CompilerServices.InlineArray(32)]
+public struct Buffer32 { private byte _element0; }
+
+[System.Runtime.CompilerServices.InlineArray(36)]
+public struct Buffer36 { private byte _element0; }
+
+[System.Runtime.CompilerServices.InlineArray(124)]
+public struct Buffer124 { private byte _element0; }
+
 public static class MetadataFormat
 {
     /* LpMetadataGeometry 的魔数 */
@@ -46,26 +55,23 @@ public static class MetadataFormat
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct LpMetadataGeometry
+public struct LpMetadataGeometry
 {
     public uint Magic;
     public uint StructSize;
-    public fixed byte Checksum[32];
+    public Buffer32 Checksum;
     public uint MetadataMaxSize;
     public uint MetadataSlotCount;
     public uint LogicalBlockSize;
 
     public static LpMetadataGeometry FromBytes(ReadOnlySpan<byte> data)
     {
-        if (data.Length < sizeof(LpMetadataGeometry))
+        if (data.Length < System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataGeometry>())
         {
             throw new ArgumentException("Data too small for LpMetadataGeometry");
         }
 
-        fixed (byte* p = data)
-        {
-            return *(LpMetadataGeometry*)p;
-        }
+        return MemoryMarshal.Read<LpMetadataGeometry>(data);
     }
 }
 
@@ -78,15 +84,15 @@ public struct LpMetadataTableDescriptor
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct LpMetadataHeader
+public struct LpMetadataHeader
 {
     public uint Magic;
     public ushort MajorVersion;
     public ushort MinorVersion;
     public uint HeaderSize;
-    public fixed byte HeaderChecksum[32];
+    public Buffer32 HeaderChecksum;
     public uint TablesSize;
-    public fixed byte TablesChecksum[32];
+    public Buffer32 TablesChecksum;
 
     public LpMetadataTableDescriptor Partitions;
     public LpMetadataTableDescriptor Extents;
@@ -94,26 +100,23 @@ public unsafe struct LpMetadataHeader
     public LpMetadataTableDescriptor BlockDevices;
 
     public uint Flags;
-    public fixed byte Reserved[124];
+    public Buffer124 Reserved;
 
     public static LpMetadataHeader FromBytes(ReadOnlySpan<byte> data)
     {
-        if (data.Length < sizeof(LpMetadataHeader))
+        if (data.Length < System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataHeader>())
         {
             throw new ArgumentException("Data too small for LpMetadataHeader");
         }
 
-        fixed (byte* p = data)
-        {
-            return *(LpMetadataHeader*)p;
-        }
+        return MemoryMarshal.Read<LpMetadataHeader>(data);
     }
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct LpMetadataPartition
+public struct LpMetadataPartition
 {
-    public fixed byte Name[36];
+    public Buffer36 Name;
     public uint Attributes;
     public uint FirstExtentIndex;
     public uint NumExtents;
@@ -121,16 +124,14 @@ public unsafe struct LpMetadataPartition
 
     public string GetName()
     {
-        fixed (byte* p = Name)
+        ReadOnlySpan<byte> nameSpan = Name;
+        var len = 0;
+        while (len < nameSpan.Length && nameSpan[len] != 0)
         {
-            var len = 0;
-            while (len < 36 && p[len] != 0)
-            {
-                len++;
-            }
-
-            return Encoding.ASCII.GetString(p, len);
+            len++;
         }
+
+        return Encoding.ASCII.GetString(nameSpan[..len]);
     }
 }
 
@@ -144,48 +145,44 @@ public struct LpMetadataExtent
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct LpMetadataPartitionGroup
+public struct LpMetadataPartitionGroup
 {
-    public fixed byte Name[36];
+    public Buffer36 Name;
     public uint Flags;
     public ulong MaximumSize;
 
     public string GetName()
     {
-        fixed (byte* p = Name)
+        ReadOnlySpan<byte> nameSpan = Name;
+        var len = 0;
+        while (len < nameSpan.Length && nameSpan[len] != 0)
         {
-            var len = 0;
-            while (len < 36 && p[len] != 0)
-            {
-                len++;
-            }
-
-            return Encoding.ASCII.GetString(p, len);
+            len++;
         }
+
+        return Encoding.ASCII.GetString(nameSpan[..len]);
     }
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct LpMetadataBlockDevice
+public struct LpMetadataBlockDevice
 {
     public ulong FirstLogicalSector;
     public uint Alignment;
     public uint AlignmentOffset;
     public ulong Size;
-    public fixed byte PartitionName[36];
+    public Buffer36 PartitionName;
     public uint Flags;
 
     public string GetPartitionName()
     {
-        fixed (byte* p = PartitionName)
+        ReadOnlySpan<byte> nameSpan = PartitionName;
+        var len = 0;
+        while (len < nameSpan.Length && nameSpan[len] != 0)
         {
-            var len = 0;
-            while (len < 36 && p[len] != 0)
-            {
-                len++;
-            }
-
-            return Encoding.ASCII.GetString(p, len);
+            len++;
         }
+
+        return Encoding.ASCII.GetString(nameSpan[..len]);
     }
 }

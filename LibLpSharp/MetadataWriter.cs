@@ -1,35 +1,30 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 
 namespace LibLpSharp;
 
 public static class MetadataWriter
 {
-    public static unsafe byte[] SerializeGeometry(LpMetadataGeometry geometry)
+    public static byte[] SerializeGeometry(LpMetadataGeometry geometry)
     {
         geometry.Magic = MetadataFormat.LP_METADATA_GEOMETRY_MAGIC;
-        geometry.StructSize = (uint)sizeof(LpMetadataGeometry);
+        geometry.StructSize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataGeometry>();
 
         for (var i = 0; i < 32; i++)
         {
             geometry.Checksum[i] = 0;
         }
 
-        var blob = new byte[sizeof(LpMetadataGeometry)];
-        fixed (byte* p = blob)
-        {
-            *(LpMetadataGeometry*)p = geometry;
-        }
+        var blob = new byte[System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataGeometry>()];
+        MemoryMarshal.Write(blob, in geometry);
 
         using (var sha256 = SHA256.Create())
         {
             var hash = sha256.ComputeHash(blob);
-            fixed (byte* p = blob)
+            // 校验和位于偏移 8 处
+            for (var i = 0; i < 32; i++)
             {
-                var pg = (LpMetadataGeometry*)p;
-                for (var i = 0; i < 32; i++)
-                {
-                    pg->Checksum[i] = hash[i];
-                }
+                blob[8 + i] = hash[i];
             }
         }
 
@@ -38,7 +33,7 @@ public static class MetadataWriter
         return padded;
     }
 
-    public static unsafe byte[] SerializeMetadata(LpMetadata metadata)
+    public static byte[] SerializeMetadata(LpMetadata metadata)
     {
         var header = metadata.Header;
 
@@ -49,27 +44,27 @@ public static class MetadataWriter
 
         header.Partitions.Offset = 0;
         header.Partitions.NumEntries = (uint)metadata.Partitions.Count;
-        header.Partitions.EntrySize = (uint)sizeof(LpMetadataPartition);
+        header.Partitions.EntrySize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataPartition>();
 
         header.Extents.Offset = (uint)partitions.Length;
         header.Extents.NumEntries = (uint)metadata.Extents.Count;
-        header.Extents.EntrySize = (uint)sizeof(LpMetadataExtent);
+        header.Extents.EntrySize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataExtent>();
 
         header.Groups.Offset = header.Extents.Offset + (uint)extents.Length;
         header.Groups.NumEntries = (uint)metadata.Groups.Count;
-        header.Groups.EntrySize = (uint)sizeof(LpMetadataPartitionGroup);
+        header.Groups.EntrySize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataPartitionGroup>();
 
         header.BlockDevices.Offset = header.Groups.Offset + (uint)groups.Length;
         header.BlockDevices.NumEntries = (uint)metadata.BlockDevices.Count;
-        header.BlockDevices.EntrySize = (uint)sizeof(LpMetadataBlockDevice);
+        header.BlockDevices.EntrySize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataBlockDevice>();
 
         header.TablesSize = header.BlockDevices.Offset + (uint)blockDevices.Length;
 
         var tables = new byte[header.TablesSize];
-        Array.Copy(partitions, 0, tables, header.Partitions.Offset, partitions.Length);
-        Array.Copy(extents, 0, tables, header.Extents.Offset, extents.Length);
-        Array.Copy(groups, 0, tables, header.Groups.Offset, groups.Length);
-        Array.Copy(blockDevices, 0, tables, header.BlockDevices.Offset, blockDevices.Length);
+        Array.Copy(partitions, 0, tables, (int)header.Partitions.Offset, partitions.Length);
+        Array.Copy(extents, 0, tables, (int)header.Extents.Offset, extents.Length);
+        Array.Copy(groups, 0, tables, (int)header.Groups.Offset, groups.Length);
+        Array.Copy(blockDevices, 0, tables, (int)header.BlockDevices.Offset, blockDevices.Length);
 
         using var sha256 = SHA256.Create();
         var tableHash = sha256.ComputeHash(tables);
@@ -79,7 +74,7 @@ public static class MetadataWriter
         }
 
         header.Magic = MetadataFormat.LP_METADATA_HEADER_MAGIC;
-        header.HeaderSize = (uint)sizeof(LpMetadataHeader);
+        header.HeaderSize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataHeader>();
 
         // 计算头部校验和之前先将其清零
         for (var i = 0; i < 32; i++)
@@ -88,18 +83,13 @@ public static class MetadataWriter
         }
 
         var headerBytes = new byte[header.HeaderSize];
-        fixed (byte* p = headerBytes)
-        {
-            *(LpMetadataHeader*)p = header;
-        }
+        MemoryMarshal.Write(headerBytes, in header);
 
         var headerHash = sha256.ComputeHash(headerBytes);
-        fixed (byte* p = &headerBytes[12]) // 对应 header_checksum 的偏移
+        // 对应 header_checksum 的偏移为 12
+        for (var i = 0; i < 32; i++)
         {
-            for (var i = 0; i < 32; i++)
-            {
-                p[i] = headerHash[i];
-            }
+            headerBytes[12 + i] = headerHash[i];
         }
 
         var result = new byte[headerBytes.Length + tables.Length];
@@ -108,22 +98,19 @@ public static class MetadataWriter
         return result;
     }
 
-    private static unsafe byte[] TableToBytes<T>(List<T> list) where T : unmanaged
+    private static byte[] TableToBytes<T>(List<T> list) where T : unmanaged
     {
         if (list.Count == 0)
         {
             return [];
         }
 
-        var entrySize = sizeof(T);
+        var entrySize = System.Runtime.CompilerServices.Unsafe.SizeOf<T>();
         var result = new byte[list.Count * entrySize];
-        fixed (byte* p = result)
+        for (var i = 0; i < list.Count; i++)
         {
-            var pt = (T*)p;
-            for (var i = 0; i < list.Count; i++)
-            {
-                pt[i] = list[i];
-            }
+            var entry = list[i];
+            MemoryMarshal.Write(result.AsSpan(i * entrySize), in entry);
         }
         return result;
     }

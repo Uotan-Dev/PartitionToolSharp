@@ -2,17 +2,17 @@ using System.Text;
 using LibUsbDotNet;
 using LibUsbDotNet.Main;
 
-namespace Potato.Fastboot;
+namespace LibFastbootSharp;
 
 /// <summary>
 /// Fastboot 主类，包含与 Fastboot 设备通信的方法。
 /// </summary>
 public class Fastboot
 {
-    private const int USB_VID = 0x18D1;
-    private const int USB_PID = 0xD00D;
-    private const int HEADER_SIZE = 4;
-    private const int BLOCK_SIZE = 512 * 1024; // 512 KB
+    private const int UsbVid = 0x18D1;
+    private const int UsbPid = 0xD00D;
+    private const int HeaderSize = 4;
+    private const int BlockSize = 512 * 1024; // 512 KB
 
     public int Timeout { get; set; } = 3000;
 
@@ -66,7 +66,7 @@ public class Fastboot
         while (true)
         {
             var allDevices = UsbDevice.AllDevices;
-            if (allDevices.Any(x => x.Vid == USB_VID && x.Pid == USB_PID))
+            if (allDevices.Any(x => x.Vid == UsbVid && x.Pid == UsbPid))
             {
                 return;
             }
@@ -87,8 +87,8 @@ public class Fastboot
     public void Connect()
     {
         var finder = string.IsNullOrWhiteSpace(_targetSerialNumber)
-            ? new UsbDeviceFinder(USB_VID, USB_PID)
-            : new UsbDeviceFinder(USB_VID, USB_PID, _targetSerialNumber);
+            ? new UsbDeviceFinder(UsbVid, UsbPid)
+            : new UsbDeviceFinder(UsbVid, UsbPid, _targetSerialNumber);
 
         _device = UsbDevice.OpenUsbDevice(finder) ?? throw new Exception("No devices available.");
         if (_device is IUsbDevice wDev)
@@ -132,16 +132,16 @@ public class Fastboot
         while (true)
         {
             readEndpoint.Read(buffer, Timeout, out var rdAct);
-            if (rdAct < HEADER_SIZE)
+            if (rdAct < HeaderSize)
             {
                 status = Status.Unknown;
                 break;
             }
 
-            var strHeader = Encoding.ASCII.GetString(buffer, 0, HEADER_SIZE);
+            var strHeader = Encoding.ASCII.GetString(buffer, 0, HeaderSize);
             status = GetStatusFromString(strHeader);
 
-            var chunk = Encoding.ASCII.GetString(buffer, HEADER_SIZE, rdAct - HEADER_SIZE);
+            var chunk = Encoding.ASCII.GetString(buffer, HeaderSize, rdAct - HeaderSize);
             responseBuilder.Append(chunk);
 
             if (status != Status.Info)
@@ -172,7 +172,7 @@ public class Fastboot
         var writeEndpoint = _device.OpenEndpointWriter(WriteEndpointID.Ep01);
         var readEndpoint = _device.OpenEndpointReader(ReadEndpointID.Ep01);
         var length = stream.Length;
-        var buffer = new byte[BLOCK_SIZE];
+        var buffer = new byte[BlockSize];
 
         if (Command($"download:{length:X8}").Status != Status.Data)
         {
@@ -182,7 +182,7 @@ public class Fastboot
         var remaining = length;
         while (remaining > 0)
         {
-            var toRead = (int)Math.Min(BLOCK_SIZE, remaining);
+            var toRead = (int)Math.Min(BlockSize, remaining);
             var read = stream.Read(buffer, 0, toRead);
             if (read == 0)
             {
@@ -200,12 +200,12 @@ public class Fastboot
 
         var resBuffer = new byte[64];
         readEndpoint.Read(resBuffer, Timeout, out var rdAct);
-        if (rdAct < HEADER_SIZE)
+        if (rdAct < HeaderSize)
         {
             throw new Exception("Invalid response after upload");
         }
 
-        var header = Encoding.ASCII.GetString(resBuffer, 0, HEADER_SIZE);
+        var header = Encoding.ASCII.GetString(resBuffer, 0, HeaderSize);
         if (GetStatusFromString(header) != Status.Okay)
         {
             throw new Exception("Invalid status after upload");
@@ -217,7 +217,7 @@ public class Fastboot
         var devices = new List<string>();
         foreach (UsbRegistry usbRegistry in UsbDevice.AllDevices)
         {
-            if (usbRegistry.Vid == USB_VID && usbRegistry.Pid == USB_PID)
+            if (usbRegistry.Vid == UsbVid && usbRegistry.Pid == UsbPid)
             {
                 // We don't necessarily need to open to get serial string if it's available in registry,
                 // but open is more reliable for checking if it's really there/accessible.

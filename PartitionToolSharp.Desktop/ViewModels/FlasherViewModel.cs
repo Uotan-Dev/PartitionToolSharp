@@ -8,7 +8,7 @@ using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LibSparseSharp;
-using Potato.Fastboot;
+using LibFastbootSharp;
 
 namespace PartitionToolSharp.Desktop.ViewModels;
 

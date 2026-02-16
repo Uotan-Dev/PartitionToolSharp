@@ -72,7 +72,7 @@ public class MetadataBuilder
         _geometry = new LpMetadataGeometry
         {
             Magic = MetadataFormat.LP_METADATA_GEOMETRY_MAGIC,
-            StructSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<LpMetadataGeometry>(),
+            StructSize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataGeometry>(),
             MetadataMaxSize = metadataMaxSize,
             MetadataSlotCount = metadataSlotCount,
             LogicalBlockSize = 4096
@@ -88,14 +88,13 @@ public class MetadataBuilder
                 4096
             ) / MetadataFormat.LP_SECTOR_SIZE
         };
-        unsafe
+
+        var nameBytes = Encoding.ASCII.GetBytes(MetadataFormat.LP_METADATA_DEFAULT_PARTITION_NAME);
+        for (var i = 0; i < nameBytes.Length && i < 35; i++)
         {
-            var nameBytes = Encoding.ASCII.GetBytes(MetadataFormat.LP_METADATA_DEFAULT_PARTITION_NAME);
-            for (var i = 0; i < nameBytes.Length && i < 35; i++)
-            {
-                super.PartitionName[i] = nameBytes[i];
-            }
+            super.PartitionName[i] = nameBytes[i];
         }
+
         _blockDevices.Add(super);
     }
 
@@ -334,18 +333,15 @@ public class MetadataBuilder
                 Magic = MetadataFormat.LP_METADATA_HEADER_MAGIC,
                 MajorVersion = MetadataFormat.LP_METADATA_MAJOR_VERSION,
                 MinorVersion = MetadataFormat.LP_METADATA_MINOR_VERSION_MIN,
-                HeaderSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<LpMetadataHeader>()
+                HeaderSize = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataHeader>()
             },
             Groups = [.. _groups.Select(g =>
                 {
                     var group = new LpMetadataPartitionGroup { Flags = g.Flags, MaximumSize = g.MaximumSize };
-                    unsafe
+                    var nameBytes = Encoding.ASCII.GetBytes(g.Name);
+                    for (var i = 0; i < nameBytes.Length && i < 35; i++)
                     {
-                        var nameBytes = Encoding.ASCII.GetBytes(g.Name);
-                        for (var i = 0; i < nameBytes.Length && i < 35; i++)
-                        {
-                            group.Name[i] = nameBytes[i];
-                        }
+                        group.Name[i] = nameBytes[i];
                     }
                     return group;
                 })],
@@ -362,13 +358,10 @@ public class MetadataBuilder
                 NumExtents = (uint)p.Extents.Count,
                 GroupIndex = (uint)_groups.FindIndex(g => g.Name == p.GroupName)
             };
-            unsafe
+            var nameBytes = Encoding.ASCII.GetBytes(p.Name);
+            for (var i = 0; i < nameBytes.Length && i < 35; i++)
             {
-                var nameBytes = Encoding.ASCII.GetBytes(p.Name);
-                for (var i = 0; i < nameBytes.Length && i < 35; i++)
-                {
-                    lpp.Name[i] = nameBytes[i];
-                }
+                lpp.Name[i] = nameBytes[i];
             }
             metadata.Partitions.Add(lpp);
             metadata.Extents.AddRange(p.Extents);
