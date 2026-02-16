@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using LibLpSharp;
 
@@ -15,6 +16,7 @@ public class SparseImageConverter
     public static void ConvertSparseToRaw(string[] inputFiles, string outputFile)
     {
         using var outputStream = new FileStream(outputFile, FileMode.Create, FileAccess.Write);
+        SparseFileNativeHelper.MarkAsSparse(outputStream);
         long maxFileSize = 0;
         foreach (var inputFile in inputFiles)
         {
@@ -92,7 +94,7 @@ public class SparseImageConverter
         fs.Seek(0, SeekOrigin.Begin);
 
         SparseFile? sparseFile = null;
-        if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SPARSE_HEADER_MAGIC)
+        if (System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(magicBuf) == SparseFormat.SPARSE_HEADER_MAGIC)
         {
             sparseFile = SparseFile.FromStream(fs);
             superStream = new SparseStream(sparseFile);
@@ -172,50 +174,12 @@ public class SparseImageConverter
     /// </summary>
     private static void WriteRawImageFromSparse(SparseFile sparseFile, Stream outputStream)
     {
-        var blockSize = sparseFile.Header.BlockSize;
-        var currentBlock = 0u;
-        var blocksWritten = 0u;
-
-        foreach (var chunk in sparseFile.Chunks)
+        // 已经迁移到 SparseFile 内部实现，这里直接调用并使用 sparseMode=true 以支持 Seek 跳过
+        if (outputStream.CanSeek)
         {
-            var targetPosition = (long)currentBlock * blockSize;
-            outputStream.Seek(targetPosition, SeekOrigin.Begin);
-
-            switch (chunk.Header.ChunkType)
-            {
-                case SparseFormat.CHUNK_TYPE_RAW:
-                    if (chunk.DataProvider != null)
-                    {
-                        chunk.DataProvider.WriteTo(outputStream);
-                        blocksWritten += chunk.Header.ChunkSize;
-                    }
-                    break;
-
-                case SparseFormat.CHUNK_TYPE_FILL:
-                    var fillBytes = BitConverter.GetBytes(chunk.FillValue);
-                    var totalFillSize = chunk.Header.ChunkSize * blockSize;
-                    blocksWritten += chunk.Header.ChunkSize;
-
-                    for (uint i = 0; i < totalFillSize; i += 4)
-                    {
-                        var bytesToWrite = Math.Min(4, (int)(totalFillSize - i));
-                        outputStream.Write(fillBytes, 0, bytesToWrite);
-                    }
-                    break;
-
-                case SparseFormat.CHUNK_TYPE_DONT_CARE:
-                    blocksWritten += chunk.Header.ChunkSize;
-                    break;
-
-                case SparseFormat.CHUNK_TYPE_CRC32:
-                    break;
-
-                default:
-                    throw new InvalidDataException($"未知的 chunk 类型: 0x{chunk.Header.ChunkType:X4}");
-            }
-
-            currentBlock += chunk.Header.ChunkSize;
+            outputStream.Seek(0, SeekOrigin.Begin);
         }
+        sparseFile.WriteRawToStream(outputStream, true);
     }
 
     /// <summary>

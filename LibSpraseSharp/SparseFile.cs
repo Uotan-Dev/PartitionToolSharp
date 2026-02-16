@@ -1,3 +1,6 @@
+using System.Buffers.Binary;
+using System.Runtime.InteropServices;
+
 namespace LibSparseSharp;
 
 /// <summary>
@@ -8,24 +11,34 @@ public interface ISparseDataProvider : IDisposable
     long Length { get; }
     void WriteTo(Stream stream);
     int Read(long offset, byte[] buffer, int bufferOffset, int count);
+    ISparseDataProvider GetSubProvider(long offset, long length);
 }
 
-public class MemoryDataProvider(byte[] data) : ISparseDataProvider
+public class MemoryDataProvider(byte[] data, int offset = 0, int length = -1) : ISparseDataProvider
 {
-    public long Length => data.Length;
-    public void WriteTo(Stream stream) => stream.Write(data, 0, data.Length);
+    private readonly int _offset = offset;
+    private readonly int _length = length < 0 ? data.Length - offset : length;
+
+    public long Length => _length;
+    public void WriteTo(Stream stream) => stream.Write(data, _offset, _length);
     public int Read(long offset, byte[] buffer, int bufferOffset, int count)
     {
-        var available = (int)Math.Max(0, data.Length - offset);
+        var available = (int)Math.Max(0, _length - offset);
         var toCopy = Math.Min(count, available);
         if (toCopy <= 0)
         {
             return 0;
         }
 
-        Array.Copy(data, (int)offset, buffer, bufferOffset, toCopy);
+        Array.Copy(data, _offset + (int)offset, buffer, bufferOffset, toCopy);
         return toCopy;
     }
+
+    public ISparseDataProvider GetSubProvider(long offset, long length)
+    {
+        return new MemoryDataProvider(data, _offset + (int)offset, (int)length);
+    }
+
     public void Dispose() { }
 }
 
@@ -63,6 +76,9 @@ public class FileDataProvider(string filePath, long offset, long length) : ISpar
         fs.Seek(offset + inOffset, SeekOrigin.Begin);
         return fs.Read(buffer, bufferOffset, toRead);
     }
+
+    public ISparseDataProvider GetSubProvider(long subOffset, long subLength) => new FileDataProvider(filePath, offset + subOffset, subLength);
+
     public void Dispose() { }
 }
 
@@ -120,18 +136,18 @@ public class SparseFile : IDisposable
     /// <summary>
     /// 从文件流读取sparse文件
     /// </summary>
-    public static SparseFile FromStream(Stream stream) => FromStreamInternal(stream, null);
+    public static SparseFile FromStream(Stream stream, bool validateCrc = false) => FromStreamInternal(stream, null, validateCrc);
 
     /// <summary>
     /// 从文件路径读取sparse文件（推荐，支持大型文件的按需读取）
     /// </summary>
-    public static SparseFile FromImageFile(string filePath)
+    public static SparseFile FromImageFile(string filePath, bool validateCrc = false)
     {
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return FromStreamInternal(stream, filePath);
+        return FromStreamInternal(stream, filePath, validateCrc);
     }
 
-    private static SparseFile FromStreamInternal(Stream stream, string? filePath)
+    private static SparseFile FromStreamInternal(Stream stream, string? filePath, bool validateCrc)
     {
         SparseLogger.Info("正在解析 Sparse 文件头...");
         var sparseFile = new SparseFile();
@@ -156,6 +172,9 @@ public class SparseFile : IDisposable
         {
             stream.Seek(sparseFile.Header.FileHeaderSize - SparseFormat.SPARSE_HEADER_SIZE, SeekOrigin.Current);
         }
+
+        var checksum = Crc32.Begin();
+        var buffer = new byte[1024 * 1024];
 
         for (uint i = 0; i < sparseFile.Header.TotalChunks; i++)
         {
@@ -182,15 +201,55 @@ public class SparseFile : IDisposable
 
             if (!chunkHeader.IsValid())
             {
-                throw new InvalidDataException($"第 {i} 个 chunk 头无效");
+                throw new InvalidDataException($"第 {i} 个 chunk 头无效: 类型 0x{chunkHeader.ChunkType:X4}");
             }
 
-            var dataSize = (long)chunkHeader.TotalSize - SparseFormat.CHUNK_HEADER_SIZE;
+            var dataSize = (long)chunkHeader.TotalSize - sparseFile.Header.ChunkHeaderSize;
+            var expectedRawSize = (long)chunkHeader.ChunkSize * sparseFile.Header.BlockSize;
 
             switch (chunkHeader.ChunkType)
             {
                 case SparseFormat.CHUNK_TYPE_RAW:
-                    if (filePath != null)
+                    if (dataSize != expectedRawSize)
+                    {
+                        throw new InvalidDataException($"第 {i} 个 RAW chunk 的总大小 ({chunkHeader.TotalSize}) 与预期数据大小 ({expectedRawSize}) 不匹配");
+                    }
+
+                    if (validateCrc)
+                    {
+                        var remaining = dataSize;
+                        while (remaining > 0)
+                        {
+                            var toRead = (int)Math.Min(buffer.Length, remaining);
+                            if (stream.Read(buffer, 0, toRead) != toRead)
+                            {
+                                throw new InvalidDataException($"无法读取第 {i} 个 chunk 的原始数据以进行校验");
+                            }
+                            checksum = Crc32.Update(checksum, buffer, 0, toRead);
+                            remaining -= toRead;
+                        }
+
+                        // 如果需要保留数据且已知路径，则重新定位（因为校验已经读过了）
+                        if (filePath != null)
+                        {
+                            chunk.DataProvider = new FileDataProvider(filePath, stream.Position - dataSize, dataSize);
+                        }
+                        else
+                        {
+                            // 校验通过后，由于流已读取，数据已经在 checksum 过程中处理过
+                            // 如果是从流创建且需要数据，则必须在校验时缓存。
+                            // 为了内存安全，如果 validateCrc 为 true 且 filePath 为 null，我们目前只能重新读入内存
+                            // 或者警告不支持在大流上进行内存校验。
+                            stream.Seek(-dataSize, SeekOrigin.Current);
+                            var rawData = new byte[dataSize];
+                            if (stream.Read(rawData, 0, (int)dataSize) != (int)dataSize)
+                            {
+                                throw new InvalidDataException($"校验后无法重新读取第 {i} 个 chunk 的数据");
+                            }
+                            chunk.DataProvider = new MemoryDataProvider(rawData);
+                        }
+                    }
+                    else if (filePath != null)
                     {
                         // 使用 FileDataProvider 进行按需读取，不占用内存
                         chunk.DataProvider = new FileDataProvider(filePath, stream.Position, dataSize);
@@ -213,24 +272,56 @@ public class SparseFile : IDisposable
                     break;
 
                 case SparseFormat.CHUNK_TYPE_FILL:
-                    if (dataSize >= 4)
+                    if (dataSize < 4)
                     {
-                        var fillData = new byte[4];
-                        if (stream.Read(fillData, 0, 4) != 4)
+                        throw new InvalidDataException($"第 {i} 个 FILL chunk 的数据大小 ({dataSize}) 小于 4 字节");
+                    }
+
+                    var fillData = new byte[4];
+                    if (stream.Read(fillData, 0, 4) != 4)
+                    {
+                        throw new InvalidDataException($"无法读取第 {i} 个 chunk 的填充值");
+                    }
+
+                    chunk.FillValue = BinaryPrimitives.ReadUInt32LittleEndian(fillData);
+
+                    if (validateCrc)
+                    {
+                        var valBytes = new byte[4];
+                        BinaryPrimitives.WriteUInt32LittleEndian(valBytes, chunk.FillValue);
+                        // 填充 buffer 以进行快速 CRC 工作
+                        for (var j = 0; j <= buffer.Length - 4; j += 4)
                         {
-                            throw new InvalidDataException($"无法读取第 {i} 个 chunk 的填充值");
+                            Array.Copy(valBytes, 0, buffer, j, 4);
                         }
 
-                        chunk.FillValue = BitConverter.ToUInt32(fillData, 0);
-
-                        if (dataSize > 4)
+                        var remainingFilling = expectedRawSize;
+                        while (remainingFilling > 0)
                         {
-                            stream.Seek(dataSize - 4, SeekOrigin.Current);
+                            var toProcess = (int)Math.Min(buffer.Length, remainingFilling);
+                            checksum = Crc32.Update(checksum, buffer, 0, toProcess);
+                            remainingFilling -= toProcess;
                         }
+                    }
+
+                    if (dataSize > 4)
+                    {
+                        stream.Seek(dataSize - 4, SeekOrigin.Current);
                     }
                     break;
 
                 case SparseFormat.CHUNK_TYPE_DONT_CARE:
+                    if (validateCrc)
+                    {
+                        Array.Clear(buffer, 0, buffer.Length);
+                        var remainingDontCare = expectedRawSize;
+                        while (remainingDontCare > 0)
+                        {
+                            var toProcess = (int)Math.Min(buffer.Length, remainingDontCare);
+                            checksum = Crc32.Update(checksum, buffer, 0, toProcess);
+                            remainingDontCare -= toProcess;
+                        }
+                    }
                     if (dataSize > 0)
                     {
                         stream.Seek(dataSize, SeekOrigin.Current);
@@ -238,9 +329,22 @@ public class SparseFile : IDisposable
                     break;
 
                 case SparseFormat.CHUNK_TYPE_CRC32:
-                    if (dataSize > 0)
+                    if (dataSize >= 4)
                     {
-                        stream.Seek(dataSize, SeekOrigin.Current);
+                        var crcFileData = new byte[4];
+                        if (stream.Read(crcFileData, 0, 4) != 4)
+                        {
+                            throw new InvalidDataException($"无法读取第 {i} 个 chunk 的 CRC32 值");
+                        }
+                        var fileCrc = BinaryPrimitives.ReadUInt32LittleEndian(crcFileData);
+                        if (validateCrc && fileCrc != Crc32.Finish(checksum))
+                        {
+                            throw new InvalidDataException($"CRC32 校验失败: 文件中为 0x{fileCrc:X8}, 计算得到 0x{Crc32.Finish(checksum):X8}");
+                        }
+                        if (dataSize > 4)
+                        {
+                            stream.Seek(dataSize - 4, SeekOrigin.Current);
+                        }
                     }
                     break;
 
@@ -248,10 +352,21 @@ public class SparseFile : IDisposable
                     throw new InvalidDataException($"第 {i} 个 chunk 类型未知: 0x{chunkHeader.ChunkType:X4}");
             }
 
-            sparseFile.Chunks.Add(chunk);
+            if (chunkHeader.ChunkType != SparseFormat.CHUNK_TYPE_CRC32)
+            {
+                sparseFile.Chunks.Add(chunk);
+            }
         }
 
-        return sparseFile;
+        uint actualTotalBlocks = 0;
+        foreach (var chunk in sparseFile.Chunks)
+        {
+            actualTotalBlocks += chunk.Header.ChunkSize;
+        }
+
+        return sparseFile.Header.TotalBlocks != actualTotalBlocks
+            ? throw new InvalidDataException($"块数不匹配: Sparse 表头声明 {sparseFile.Header.TotalBlocks} 块, 但实际解析到 {actualTotalBlocks} 块")
+            : sparseFile;
     }
 
     /// <summary>
@@ -259,84 +374,117 @@ public class SparseFile : IDisposable
     /// </summary>
     public void WriteToStream(Stream stream, bool includeCrc = false)
     {
-        var header = Header;
-        header.TotalChunks = (uint)Chunks.Count;
+        var outHeader = Header;
+        var sumBlocks = (uint)Chunks.Sum(c => (long)c.Header.ChunkSize);
+
+        // 如果 Chunks 中定义的块数不足 Header.TotalBlocks，则需要补齐一个 DONT_CARE 块
+        var needsTrailingSkip = outHeader.TotalBlocks > sumBlocks;
+
+        var totalChunks = (uint)Chunks.Count;
+        if (needsTrailingSkip)
+        {
+            totalChunks++;
+        }
         if (includeCrc)
         {
-            header.TotalChunks++; // 为 CRC chunk 预留空间
+            totalChunks++; // 为 CRC chunk 预留空间
         }
-        Header = header;
 
-        var headerData = Header.ToBytes();
+        outHeader.TotalChunks = totalChunks;
+        // 如果 Chunks 中定义的块数超过了 Header.TotalBlocks，则更新 TotalBlocks 以匹配实际大小
+        if (sumBlocks > outHeader.TotalBlocks)
+        {
+            outHeader.TotalBlocks = sumBlocks;
+        }
+
+        var headerData = outHeader.ToBytes();
         stream.Write(headerData, 0, headerData.Length);
 
         var checksum = Crc32.Begin();
+        var buffer = new byte[1024 * 1024];
 
         foreach (var chunk in Chunks)
         {
             var chunkHeaderData = chunk.Header.ToBytes();
             stream.Write(chunkHeaderData, 0, chunkHeaderData.Length);
 
+            var expectedDataSize = (long)chunk.Header.ChunkSize * outHeader.BlockSize;
+
             switch (chunk.Header.ChunkType)
             {
                 case SparseFormat.CHUNK_TYPE_RAW:
                     if (chunk.DataProvider != null)
                     {
-                        if (includeCrc)
+                        long providerOffset = 0;
+                        while (providerOffset < chunk.DataProvider.Length)
                         {
-                            var buffer = new byte[1024 * 1024];
-                            long providerOffset = 0;
-                            while (providerOffset < chunk.DataProvider.Length)
+                            var toRead = (int)Math.Min(buffer.Length, chunk.DataProvider.Length - providerOffset);
+                            var read = chunk.DataProvider.Read(providerOffset, buffer, 0, toRead);
+                            if (read <= 0)
                             {
-                                var toRead = (int)Math.Min(buffer.Length, chunk.DataProvider.Length - providerOffset);
-                                var read = chunk.DataProvider.Read(providerOffset, buffer, 0, toRead);
-                                if (read <= 0)
-                                {
-                                    break;
-                                }
-
-                                stream.Write(buffer, 0, read);
-                                checksum = Crc32.Update(checksum, buffer, 0, read);
-                                providerOffset += read;
+                                break;
                             }
+
+                            stream.Write(buffer, 0, read);
+                            if (includeCrc)
+                            {
+                                checksum = Crc32.Update(checksum, buffer, 0, read);
+                            }
+                            providerOffset += read;
                         }
-                        else
+
+                        // 如果提供的数据不足一个块大小的整数倍，填充 0
+                        var padding = expectedDataSize - providerOffset;
+                        if (padding > 0)
                         {
-                            chunk.DataProvider.WriteTo(stream);
+                            Array.Clear(buffer, 0, (int)Math.Min(buffer.Length, padding));
+                            while (padding > 0)
+                            {
+                                var toWrite = (int)Math.Min(buffer.Length, padding);
+                                stream.Write(buffer, 0, toWrite);
+                                if (includeCrc)
+                                {
+                                    checksum = Crc32.Update(checksum, buffer, 0, toWrite);
+                                }
+                                padding -= toWrite;
+                            }
                         }
                     }
                     else
                     {
                         // 如果缺少提供者但头部指示为 RAW，则填充 0
-                        var zeros = new byte[chunk.Header.ChunkSize * Header.BlockSize];
-                        if (includeCrc)
+                        Array.Clear(buffer, 0, buffer.Length);
+                        var remaining = expectedDataSize;
+                        while (remaining > 0)
                         {
-                            checksum = Crc32.Update(checksum, zeros);
+                            var toWrite = (int)Math.Min(buffer.Length, remaining);
+                            stream.Write(buffer, 0, toWrite);
+                            if (includeCrc)
+                            {
+                                checksum = Crc32.Update(checksum, buffer, 0, toWrite);
+                            }
+                            remaining -= toWrite;
                         }
-
-                        stream.Write(zeros, 0, zeros.Length);
                     }
                     break;
 
                 case SparseFormat.CHUNK_TYPE_FILL:
-                    var fillValData = BitConverter.GetBytes(chunk.FillValue);
+                    var fillValData = new byte[4];
+                    BinaryPrimitives.WriteUInt32LittleEndian(fillValData, chunk.FillValue);
                     stream.Write(fillValData, 0, fillValData.Length);
                     if (includeCrc)
                     {
-                        var fillVal = chunk.FillValue;
-                        var valBytes = BitConverter.GetBytes(fillVal);
-                        var totalBytes = (long)chunk.Header.ChunkSize * Header.BlockSize;
-
-                        var buffer = new byte[Math.Min(1024 * 1024, totalBytes)];
-                        for (var i = 0; i < buffer.Length; i += 4)
+                        var valBytes = new byte[4];
+                        BinaryPrimitives.WriteUInt32LittleEndian(valBytes, chunk.FillValue);
+                        for (var i = 0; i <= buffer.Length - 4; i += 4)
                         {
                             Array.Copy(valBytes, 0, buffer, i, 4);
                         }
 
                         long processed = 0;
-                        while (processed < totalBytes)
+                        while (processed < expectedDataSize)
                         {
-                            var toProcess = (int)Math.Min(buffer.Length, totalBytes - processed);
+                            var toProcess = (int)Math.Min(buffer.Length, expectedDataSize - processed);
                             checksum = Crc32.Update(checksum, buffer, 0, toProcess);
                             processed += toProcess;
                         }
@@ -346,13 +494,12 @@ public class SparseFile : IDisposable
                 case SparseFormat.CHUNK_TYPE_DONT_CARE:
                     if (includeCrc)
                     {
-                        var totalBytes = (long)chunk.Header.ChunkSize * Header.BlockSize;
-                        var zeroBuf = new byte[Math.Min(1024 * 1024, totalBytes)];
+                        Array.Clear(buffer, 0, buffer.Length);
                         long processed = 0;
-                        while (processed < totalBytes)
+                        while (processed < expectedDataSize)
                         {
-                            var toProcess = (int)Math.Min(zeroBuf.Length, totalBytes - processed);
-                            checksum = Crc32.Update(checksum, zeroBuf, 0, toProcess);
+                            var toProcess = (int)Math.Min(buffer.Length, expectedDataSize - processed);
+                            checksum = Crc32.Update(checksum, buffer, 0, toProcess);
                             processed += toProcess;
                         }
                     }
@@ -365,9 +512,36 @@ public class SparseFile : IDisposable
             }
         }
 
+        // 写入自动生成的尾部 skip 块
+        if (needsTrailingSkip)
+        {
+            var skipSize = outHeader.TotalBlocks - sumBlocks;
+            var skipHeader = new ChunkHeader
+            {
+                ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                Reserved = 0,
+                ChunkSize = skipSize,
+                TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+            };
+            stream.Write(skipHeader.ToBytes(), 0, SparseFormat.CHUNK_HEADER_SIZE);
+
+            if (includeCrc)
+            {
+                var skipDataLen = (long)skipSize * outHeader.BlockSize;
+                Array.Clear(buffer, 0, buffer.Length);
+                long processed = 0;
+                while (processed < skipDataLen)
+                {
+                    var toProcess = (int)Math.Min(buffer.Length, skipDataLen - processed);
+                    checksum = Crc32.Update(checksum, buffer, 0, toProcess);
+                    processed += toProcess;
+                }
+            }
+        }
+
         if (includeCrc)
         {
-            checksum = Crc32.Finish(checksum);
+            var finalChecksum = Crc32.Finish(checksum);
             var crcHeader = new ChunkHeader
             {
                 ChunkType = SparseFormat.CHUNK_TYPE_CRC32,
@@ -375,25 +549,31 @@ public class SparseFile : IDisposable
                 ChunkSize = 0,
                 TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4
             };
+            var finalCrcData = new byte[4];
+            BinaryPrimitives.WriteUInt32LittleEndian(finalCrcData, finalChecksum);
             stream.Write(crcHeader.ToBytes(), 0, SparseFormat.CHUNK_HEADER_SIZE);
-            stream.Write(BitConverter.GetBytes(checksum), 0, 4);
+            stream.Write(finalCrcData, 0, 4);
 
             // 更新流中的头部信息（回到开头）
-            var finalHeader = Header;
-            finalHeader.ImageChecksum = checksum;
-            Header = finalHeader;
-            var currentPos = stream.Position;
-            stream.Seek(0, SeekOrigin.Begin);
-            stream.Write(Header.ToBytes(), 0, SparseFormat.SPARSE_HEADER_SIZE);
-            stream.Seek(currentPos, SeekOrigin.Begin);
+            outHeader.ImageChecksum = finalChecksum;
+            if (stream.CanSeek)
+            {
+                var currentPos = stream.Position;
+                stream.Seek(0, SeekOrigin.Begin);
+                stream.Write(outHeader.ToBytes(), 0, SparseFormat.SPARSE_HEADER_SIZE);
+                stream.Seek(currentPos, SeekOrigin.Begin);
+            }
         }
     }
 
     /// <summary>
     /// 将 SparseFile 写入为 Raw 镜像（解包/导出）
     /// </summary>
-    public void WriteRawToStream(Stream stream)
+    /// <param name="stream">目标流</param>
+    /// <param name="sparseMode">如果为 true，对于 DONT_CARE 块尝试通过 Seek 跳过（如果流支持），否则写入 0。默认 false (写入全量镜像)</param>
+    public void WriteRawToStream(Stream stream, bool sparseMode = false)
     {
+        var buffer = new byte[1024 * 1024];
         foreach (var chunk in Chunks)
         {
             var size = (long)chunk.Header.ChunkSize * Header.BlockSize;
@@ -402,30 +582,84 @@ public class SparseFile : IDisposable
                 case SparseFormat.CHUNK_TYPE_RAW:
                     if (chunk.DataProvider != null)
                     {
-                        chunk.DataProvider.WriteTo(stream);
+                        // 逻辑改为通过 DataProvider 写入，并自动处理长度不足的填充
+                        long written = 0;
+                        while (written < chunk.DataProvider.Length)
+                        {
+                            var toRead = (int)Math.Min(buffer.Length, chunk.DataProvider.Length - written);
+                            var read = chunk.DataProvider.Read(written, buffer, 0, toRead);
+                            if (read <= 0)
+                            {
+                                break;
+                            }
+
+                            stream.Write(buffer, 0, read);
+                            written += read;
+                        }
+                        // 填充到块大小倍数
+                        if (written < size)
+                        {
+                            Array.Clear(buffer, 0, (int)Math.Min(buffer.Length, size - written));
+                            while (written < size)
+                            {
+                                var toWrite = (int)Math.Min(buffer.Length, size - written);
+                                stream.Write(buffer, 0, toWrite);
+                                written += toWrite;
+                            }
+                        }
                     }
                     else
                     {
-                        // 预留空间但不写入（如果是稀疏流则会产生空洞）
-                        stream.Seek(size, SeekOrigin.Current);
+                        // 缺失数据源
+                        if (sparseMode && stream.CanSeek)
+                        {
+                            stream.Seek(size, SeekOrigin.Current);
+                        }
+                        else
+                        {
+                            Array.Clear(buffer, 0, buffer.Length);
+                            var remaining = size;
+                            while (remaining > 0)
+                            {
+                                var toWrite = (int)Math.Min(buffer.Length, remaining);
+                                stream.Write(buffer, 0, toWrite);
+                                remaining -= toWrite;
+                            }
+                        }
                     }
                     break;
                 case SparseFormat.CHUNK_TYPE_FILL:
-                    var fillVal = BitConverter.GetBytes(chunk.FillValue);
-                    var fillBuf = new byte[Header.BlockSize];
-                    for (var i = 0; i < Header.BlockSize; i += 4)
+                    var fillValBytes = new byte[4];
+                    BinaryPrimitives.WriteUInt32LittleEndian(fillValBytes, chunk.FillValue);
+                    for (var i = 0; i <= buffer.Length - 4; i += 4)
                     {
-                        Array.Copy(fillVal, 0, fillBuf, i, 4);
+                        Array.Copy(fillValBytes, 0, buffer, i, 4);
                     }
 
-                    for (var i = 0; i < chunk.Header.ChunkSize; i++)
+                    var fillRemaining = size;
+                    while (fillRemaining > 0)
                     {
-                        stream.Write(fillBuf, 0, fillBuf.Length);
+                        var toWrite = (int)Math.Min(buffer.Length, fillRemaining);
+                        stream.Write(buffer, 0, toWrite);
+                        fillRemaining -= toWrite;
                     }
-
                     break;
                 case SparseFormat.CHUNK_TYPE_DONT_CARE:
-                    stream.Seek(size, SeekOrigin.Current);
+                    if (sparseMode && stream.CanSeek)
+                    {
+                        stream.Seek(size, SeekOrigin.Current);
+                    }
+                    else
+                    {
+                        Array.Clear(buffer, 0, buffer.Length);
+                        var remaining = size;
+                        while (remaining > 0)
+                        {
+                            var toWrite = (int)Math.Min(buffer.Length, remaining);
+                            stream.Write(buffer, 0, toWrite);
+                            remaining -= toWrite;
+                        }
+                    }
                     break;
                 default:
                     break;
@@ -433,10 +667,10 @@ public class SparseFile : IDisposable
         }
 
         // 确保文件长度达到预期
-        var expectedLength = (long)Header.TotalBlocks * Header.BlockSize;
-        if (stream.Length < expectedLength)
+        var expectedFullLength = (long)Header.TotalBlocks * Header.BlockSize;
+        if (stream.CanSeek && stream.Length < expectedFullLength)
         {
-            stream.SetLength(expectedLength);
+            stream.SetLength(expectedFullLength);
         }
     }
 
@@ -446,22 +680,37 @@ public class SparseFile : IDisposable
     public void AddRawFileChunk(string filePath, long offset, uint size)
     {
         var blockSize = Header.BlockSize;
-        var chunkBlocks = (size + blockSize - 1) / blockSize;
+        var remaining = size;
+        var currentOffset = offset;
 
-        var chunkHeader = new ChunkHeader
+        while (remaining > 0)
         {
-            ChunkType = SparseFormat.CHUNK_TYPE_RAW,
-            Reserved = 0,
-            ChunkSize = chunkBlocks,
-            TotalSize = SparseFormat.CHUNK_HEADER_SIZE + size
-        };
+            var partSize = Math.Min(remaining, SparseFormat.MAX_CHUNK_DATA_SIZE);
+            // 尽量保持块对齐
+            if (partSize < remaining && partSize % blockSize != 0)
+            {
+                partSize = (partSize / blockSize) * blockSize;
+                if (partSize == 0) partSize = remaining; // 无法对齐则取剩余全部（虽然这不应该发生）
+            }
 
-        var chunk = new SparseChunk(chunkHeader)
-        {
-            DataProvider = new FileDataProvider(filePath, offset, size)
-        };
+            var chunkBlocks = (uint)((partSize + blockSize - 1) / blockSize);
+            var chunkHeader = new ChunkHeader
+            {
+                ChunkType = SparseFormat.CHUNK_TYPE_RAW,
+                Reserved = 0,
+                ChunkSize = chunkBlocks,
+                TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + (chunkBlocks * (long)blockSize))
+            };
 
-        Chunks.Add(chunk);
+            var chunk = new SparseChunk(chunkHeader)
+            {
+                DataProvider = new FileDataProvider(filePath, currentOffset, partSize)
+            };
+
+            Chunks.Add(chunk);
+            remaining -= partSize;
+            currentOffset += partSize;
+        }
     }
 
     /// <summary>
@@ -469,68 +718,106 @@ public class SparseFile : IDisposable
     /// </summary>
     public void AddRawChunk(byte[] data)
     {
-        var dataSize = (uint)data.Length;
         var blockSize = Header.BlockSize;
-        var chunkBlocks = (dataSize + blockSize - 1) / blockSize;
+        var remaining = (uint)data.Length;
+        var currentOffset = 0;
 
-        var chunkHeader = new ChunkHeader
+        while (remaining > 0)
         {
-            ChunkType = SparseFormat.CHUNK_TYPE_RAW,
-            Reserved = 0,
-            ChunkSize = chunkBlocks,
-            TotalSize = SparseFormat.CHUNK_HEADER_SIZE + dataSize
-        };
+            var partSize = Math.Min(remaining, SparseFormat.MAX_CHUNK_DATA_SIZE);
+            if (partSize < remaining && partSize % blockSize != 0)
+            {
+                partSize = (partSize / blockSize) * blockSize;
+                if (partSize == 0) partSize = remaining;
+            }
 
-        var chunk = new SparseChunk(chunkHeader)
-        {
-            DataProvider = new MemoryDataProvider(data)
-        };
+            var chunkBlocks = (uint)((partSize + blockSize - 1) / blockSize);
+            var chunkHeader = new ChunkHeader
+            {
+                ChunkType = SparseFormat.CHUNK_TYPE_RAW,
+                Reserved = 0,
+                ChunkSize = chunkBlocks,
+                TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + (chunkBlocks * (long)blockSize))
+            };
 
-        Chunks.Add(chunk);
+            var chunk = new SparseChunk(chunkHeader)
+            {
+                DataProvider = new MemoryDataProvider(data, currentOffset, (int)partSize)
+            };
+
+            Chunks.Add(chunk);
+            remaining -= (uint)partSize;
+            currentOffset += (int)partSize;
+        }
     }
 
     /// <summary>
     /// 添加填充块
     /// </summary>
-    public void AddFillChunk(uint fillValue, uint size)
+    public void AddFillChunk(uint fillValue, long size)
     {
         var blockSize = Header.BlockSize;
-        var chunkBlocks = (size + blockSize - 1) / blockSize;
+        var remaining = size;
 
-        var chunkHeader = new ChunkHeader
+        while (remaining > 0)
         {
-            ChunkType = SparseFormat.CHUNK_TYPE_FILL,
-            Reserved = 0,
-            ChunkSize = chunkBlocks,
-            TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4
-        };
+            var partSize = Math.Min(remaining, (long)SparseFormat.MAX_CHUNK_DATA_SIZE * blockSize); // 逻辑上限制块数以保持兼容
+            // 由于是填充块，其实只需要限制 ChunkSize 字段不要太大（uint32）
+            // 但为了刷机稳定性，我们也按 MAX_CHUNK_DATA_SIZE 大致对应的块数切分
+            var maxBlocksPerChunk = SparseFormat.MAX_CHUNK_DATA_SIZE / 4; // 这是一个保守值
 
-        var chunk = new SparseChunk(chunkHeader)
-        {
-            FillValue = fillValue
-        };
+            var partBlocks = (uint)((partSize + blockSize - 1) / blockSize);
+            if (partBlocks > 0x00FFFFFF) partBlocks = 0x00FFFFFF; // 限制单个 chunk 的块数
 
-        Chunks.Add(chunk);
+            var actualPartSize = (long)partBlocks * blockSize;
+            if (actualPartSize > remaining) actualPartSize = remaining;
+
+            var chunkHeader = new ChunkHeader
+            {
+                ChunkType = SparseFormat.CHUNK_TYPE_FILL,
+                Reserved = 0,
+                ChunkSize = partBlocks,
+                TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4
+            };
+
+            var chunk = new SparseChunk(chunkHeader)
+            {
+                FillValue = fillValue
+            };
+
+            Chunks.Add(chunk);
+            remaining -= actualPartSize;
+        }
     }
 
     /// <summary>
     /// 添加空数据块
     /// </summary>
-    public void AddDontCareChunk(uint size)
+    public void AddDontCareChunk(long size)
     {
         var blockSize = Header.BlockSize;
-        var chunkBlocks = (size + blockSize - 1) / blockSize;
+        var remaining = size;
 
-        var chunkHeader = new ChunkHeader
+        while (remaining > 0)
         {
-            ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
-            Reserved = 0,
-            ChunkSize = chunkBlocks,
-            TotalSize = SparseFormat.CHUNK_HEADER_SIZE
-        };
+            var maxBlocksPerChunk = 0x00FFFFFFu; // 限制单个 skip chunk 的块数，避免某些解析器异常
+            var partBlocks = (uint)((remaining + blockSize - 1) / blockSize);
+            if (partBlocks > maxBlocksPerChunk) partBlocks = maxBlocksPerChunk;
 
-        var chunk = new SparseChunk(chunkHeader);
-        Chunks.Add(chunk);
+            var actualPartSize = (long)partBlocks * blockSize;
+
+            var chunkHeader = new ChunkHeader
+            {
+                ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                Reserved = 0,
+                ChunkSize = partBlocks,
+                TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+            };
+
+            var chunk = new SparseChunk(chunkHeader);
+            Chunks.Add(chunk);
+            remaining -= Math.Min(remaining, actualPartSize);
+        }
     }
 
     public void Dispose()
@@ -547,48 +834,126 @@ public class SparseFile : IDisposable
     public List<SparseFile> Resparse(long maxFileSize)
     {
         var result = new List<SparseFile>();
-        if (maxFileSize <= SparseFormat.SPARSE_HEADER_SIZE)
+        // 与 libsparse 的 move_chunks_up_to_len 对齐：
+        // overhead = SparseHeader + 可能的尾部 skip header + CRC chunk
+        long overhead = SparseFormat.SPARSE_HEADER_SIZE + (2 * SparseFormat.CHUNK_HEADER_SIZE) + 4;
+
+        if (maxFileSize <= overhead)
         {
-            throw new ArgumentException("maxFileSize 必须大于文件头大小");
+            throw new ArgumentException($"maxFileSize 必须大于基础结构开销 ({overhead} 字节)");
         }
 
-        var currentFile = CreateNewSparseForResparse();
-        long currentSize = SparseFormat.SPARSE_HEADER_SIZE;
+        var fileLimit = maxFileSize - overhead;
+        var entries = BuildResparseEntries();
 
-        foreach (var chunk in Chunks)
+        if (entries.Count == 0)
         {
-            long chunkSizeInFile = chunk.Header.TotalSize;
-
-            // 如果单个 chunk 超过了限制，且当前文件已有内容，先保存当前文件
-            if (currentSize + chunkSizeInFile > maxFileSize && currentFile.Chunks.Count > 0)
+            var emptyFile = CreateNewSparseForResparse();
+            emptyFile.Header = emptyFile.Header with { TotalBlocks = Header.TotalBlocks };
+            if (Header.TotalBlocks > 0)
             {
-                FinishCurrentResparseFile(currentFile);
-                result.Add(currentFile);
-                currentFile = CreateNewSparseForResparse();
-                currentSize = SparseFormat.SPARSE_HEADER_SIZE;
+                emptyFile.Chunks.Add(CreateDontCareChunk(Header.TotalBlocks));
             }
-
-            // 如果单个 chunk 依然超过限制（即一个 RAW 块就很大），需要拆分该 chunk (仅对 RAW 和 DONT_CARE 有效)
-            if (chunkSizeInFile > (maxFileSize - SparseFormat.SPARSE_HEADER_SIZE))
-            {
-                SplitAndAddChunk(currentFile, chunk, maxFileSize, ref result, ref currentSize);
-                currentFile = result[^1]; // Get the last created file
-                result.RemoveAt(result.Count - 1); // We will add it back in the next iteration or at the end
-            }
-            else
-            {
-                currentFile.Chunks.Add(chunk);
-                currentSize += chunkSizeInFile;
-            }
+            FinishCurrentResparseFile(emptyFile);
+            result.Add(emptyFile);
+            return result;
         }
 
-        if (currentFile.Chunks.Count > 0)
+        var startIndex = 0;
+        while (startIndex < entries.Count)
         {
-            FinishCurrentResparseFile(currentFile);
+            long fileLen = 0;
+            uint lastBlock = 0;
+            var lastIncludedIndex = -1;
+
+            for (var i = startIndex; i < entries.Count; i++)
+            {
+                var entry = entries[i];
+                var count = GetSparseChunkSize(entry.Chunk);
+                if (entry.StartBlock > lastBlock)
+                {
+                    count += SparseFormat.CHUNK_HEADER_SIZE;
+                }
+
+                lastBlock = entry.StartBlock + entry.Chunk.Header.ChunkSize;
+
+                if (fileLen + count > fileLimit)
+                {
+                    fileLen += SparseFormat.CHUNK_HEADER_SIZE;
+                    var availableForData = fileLimit - fileLen;
+                    var canSplit = lastIncludedIndex < 0 || availableForData > (fileLimit / 8);
+
+                    if (canSplit)
+                    {
+                        var blocksToTake = availableForData > 0
+                            ? (uint)(availableForData / Header.BlockSize)
+                            : 0u;
+
+                        if (blocksToTake > 0 && blocksToTake < entry.Chunk.Header.ChunkSize)
+                        {
+                            var (part1, part2) = SplitChunkInternal(entry.Chunk, blocksToTake);
+                            entries[i] = new ResparseEntry(entry.StartBlock, part1);
+                            entries.Insert(i + 1, new ResparseEntry(entry.StartBlock + blocksToTake, part2));
+                            lastIncludedIndex = i;
+                        }
+                    }
+
+                    break;
+                }
+
+                fileLen += count;
+                lastIncludedIndex = i;
+            }
+
+            if (lastIncludedIndex < startIndex)
+            {
+                throw new InvalidOperationException("无法将 Chunk 放入 SparseFile，请增加 maxFileSize。");
+            }
+
+            var currentFile = BuildResparseFile(entries, startIndex, lastIncludedIndex);
             result.Add(currentFile);
+            startIndex = lastIncludedIndex + 1;
         }
 
         return result;
+    }
+
+    private (SparseChunk First, SparseChunk Second) SplitChunkInternal(SparseChunk chunk, uint blocksToTake)
+    {
+        var h1 = chunk.Header with { ChunkSize = blocksToTake };
+        var h2 = chunk.Header with { ChunkSize = chunk.Header.ChunkSize - blocksToTake };
+
+        if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
+        {
+            h1.TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + ((long)blocksToTake * Header.BlockSize));
+            h2.TotalSize = (uint)(SparseFormat.CHUNK_HEADER_SIZE + ((long)h2.ChunkSize * Header.BlockSize));
+        }
+        else if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_FILL)
+        {
+            h1.TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4;
+            h2.TotalSize = SparseFormat.CHUNK_HEADER_SIZE + 4;
+        }
+        else // DONT_CARE
+        {
+            h1.TotalSize = SparseFormat.CHUNK_HEADER_SIZE;
+            h2.TotalSize = SparseFormat.CHUNK_HEADER_SIZE;
+        }
+
+        var part1 = new SparseChunk(h1);
+        var part2 = new SparseChunk(h2);
+
+        if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW && chunk.DataProvider != null)
+        {
+            part1.DataProvider = chunk.DataProvider.GetSubProvider(0, (long)blocksToTake * Header.BlockSize);
+            part2.DataProvider = chunk.DataProvider.GetSubProvider((long)blocksToTake * Header.BlockSize, (long)h2.ChunkSize * Header.BlockSize);
+        }
+        else if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_FILL)
+        {
+            part1.FillValue = chunk.FillValue;
+            part2.FillValue = chunk.FillValue;
+        }
+
+        return (part1, part2);
     }
 
     private SparseFile CreateNewSparseForResparse()
@@ -609,74 +974,93 @@ public class SparseFile : IDisposable
 
     private void FinishCurrentResparseFile(SparseFile file)
     {
-        file.Header = new SparseHeader
+        var header = file.Header;
+        header.TotalChunks = (uint)file.Chunks.Count;
+        header.TotalBlocks = (uint)file.Chunks.Sum(c => c.Header.ChunkSize);
+        file.Header = header;
+    }
+
+    private sealed class ResparseEntry
+    {
+        public ResparseEntry(uint startBlock, SparseChunk chunk)
         {
-            Magic = file.Header.Magic,
-            MajorVersion = file.Header.MajorVersion,
-            MinorVersion = file.Header.MinorVersion,
-            FileHeaderSize = file.Header.FileHeaderSize,
-            ChunkHeaderSize = file.Header.ChunkHeaderSize,
-            BlockSize = file.Header.BlockSize,
-            TotalChunks = (uint)file.Chunks.Count,
-            TotalBlocks = (uint)file.Chunks.Sum(c => c.Header.ChunkSize)
+            StartBlock = startBlock;
+            Chunk = chunk;
+        }
+
+        public uint StartBlock { get; }
+        public SparseChunk Chunk { get; }
+    }
+
+    private List<ResparseEntry> BuildResparseEntries()
+    {
+        var entries = new List<ResparseEntry>();
+        uint currentBlock = 0;
+
+        foreach (var chunk in Chunks)
+        {
+            switch (chunk.Header.ChunkType)
+            {
+                case SparseFormat.CHUNK_TYPE_RAW:
+                case SparseFormat.CHUNK_TYPE_FILL:
+                    entries.Add(new ResparseEntry(currentBlock, chunk));
+                    break;
+                default:
+                    break;
+            }
+
+            currentBlock += chunk.Header.ChunkSize;
+        }
+
+        return entries;
+    }
+
+    private long GetSparseChunkSize(SparseChunk chunk)
+    {
+        return chunk.Header.ChunkType switch
+        {
+            SparseFormat.CHUNK_TYPE_RAW => SparseFormat.CHUNK_HEADER_SIZE + ((long)chunk.Header.ChunkSize * Header.BlockSize),
+            SparseFormat.CHUNK_TYPE_FILL => SparseFormat.CHUNK_HEADER_SIZE + 4,
+            _ => SparseFormat.CHUNK_HEADER_SIZE
         };
     }
 
-    private void SplitAndAddChunk(SparseFile currentFile, SparseChunk chunk, long maxFileSize, ref List<SparseFile> results, ref long currentSize)
+    private SparseChunk CreateDontCareChunk(uint blocks)
     {
-        if (chunk.Header.ChunkType is not SparseFormat.CHUNK_TYPE_RAW and not SparseFormat.CHUNK_TYPE_DONT_CARE)
+        return new SparseChunk(new ChunkHeader
         {
-            // FILL 块很小，不需要拆分，直接放入新文件
-            FinishCurrentResparseFile(currentFile);
-            results.Add(currentFile);
-            var next = CreateNewSparseForResparse();
-            next.Chunks.Add(chunk);
-            currentSize = SparseFormat.SPARSE_HEADER_SIZE + chunk.Header.TotalSize;
-            results.Add(next);
-            return;
-        }
-
-        var blocksPerFile = (uint)((maxFileSize - SparseFormat.SPARSE_HEADER_SIZE - SparseFormat.CHUNK_HEADER_SIZE) / Header.BlockSize);
-        var remainingBlocks = chunk.Header.ChunkSize;
-        uint chunkStartBlock = 0;
-
-        while (remainingBlocks > 0)
-        {
-            var toTake = Math.Min(remainingBlocks, GetBlocksNeededToFill(currentFile, maxFileSize));
-            if (toTake == 0)
-            {
-                FinishCurrentResparseFile(currentFile);
-                results.Add(currentFile);
-                currentFile = CreateNewSparseForResparse();
-                toTake = Math.Min(remainingBlocks, blocksPerFile);
-            }
-
-            var subHeader = chunk.Header;
-            subHeader.ChunkSize = toTake;
-            subHeader.TotalSize = (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
-                ? SparseFormat.CHUNK_HEADER_SIZE + (toTake * Header.BlockSize)
-                : SparseFormat.CHUNK_HEADER_SIZE;
-
-            var subChunk = new SparseChunk(subHeader);
-            if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW && chunk.DataProvider != null)
-            {
-                if (chunk.DataProvider is FileDataProvider)
-                {
-                }
-            }
-
-            currentFile.Chunks.Add(subChunk);
-            remainingBlocks -= toTake;
-            chunkStartBlock += toTake;
-        }
-        results.Add(currentFile);
+            ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+            Reserved = 0,
+            ChunkSize = blocks,
+            TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+        });
     }
 
-    private uint GetBlocksNeededToFill(SparseFile file, long maxFileSize)
+    private SparseFile BuildResparseFile(List<ResparseEntry> entries, int startIndex, int endIndex)
     {
-        var currentSize = SparseFormat.SPARSE_HEADER_SIZE + file.Chunks.Sum(c => c.Header.TotalSize);
-        var available = maxFileSize - currentSize - SparseFormat.CHUNK_HEADER_SIZE;
-        return available <= 0 ? 0 : (uint)(available / Header.BlockSize);
+        var file = CreateNewSparseForResparse();
+        file.Header = file.Header with { TotalBlocks = Header.TotalBlocks };
+
+        uint currentBlock = 0;
+        for (var i = startIndex; i <= endIndex; i++)
+        {
+            var entry = entries[i];
+            if (entry.StartBlock > currentBlock)
+            {
+                file.Chunks.Add(CreateDontCareChunk(entry.StartBlock - currentBlock));
+            }
+
+            file.Chunks.Add(entry.Chunk);
+            currentBlock = entry.StartBlock + entry.Chunk.Header.ChunkSize;
+        }
+
+        if (currentBlock < Header.TotalBlocks)
+        {
+            file.Chunks.Add(CreateDontCareChunk(Header.TotalBlocks - currentBlock));
+        }
+
+        FinishCurrentResparseFile(file);
+        return file;
     }
 
     /// <summary>
@@ -689,77 +1073,9 @@ public class SparseFile : IDisposable
     /// </summary>
     public IEnumerable<Stream> GetResparsedStreams(long maxFileSize, bool includeCrc = false)
     {
-        if (maxFileSize <= SparseFormat.SPARSE_HEADER_SIZE + SparseFormat.CHUNK_HEADER_SIZE + (includeCrc ? SparseFormat.CHUNK_HEADER_SIZE + 4 : 0))
+        foreach (var file in Resparse(maxFileSize))
         {
-            throw new ArgumentException("maxFileSize 太小，无法容纳基本的 Sparse 结构");
-        }
-
-        uint currentBlock = 0;
-        var totalBlocks = Header.TotalBlocks;
-
-        while (currentBlock < totalBlocks)
-        {
-            var startBlock = currentBlock;
-            var currentSparseSize = SparseFormat.SPARSE_HEADER_SIZE + (includeCrc ? (long)SparseFormat.CHUNK_HEADER_SIZE + 4 : 0);
-            uint blocksToInclude = 0;
-
-            uint chunkBaseBlock = 0;
-            foreach (var chunk in Chunks)
-            {
-                var chunkEndBlock = chunkBaseBlock + chunk.Header.ChunkSize;
-
-                if (chunkEndBlock <= currentBlock)
-                {
-                    chunkBaseBlock = chunkEndBlock;
-                    continue;
-                }
-
-                var offsetInChunk = currentBlock - chunkBaseBlock;
-                var remainingInChunk = chunk.Header.ChunkSize - offsetInChunk;
-
-                long headerSize = SparseFormat.CHUNK_HEADER_SIZE;
-                long dataSizePerBlock = 0;
-                long fixedDataSize = 0;
-
-                if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
-                {
-                    dataSizePerBlock = Header.BlockSize;
-                }
-                else if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_FILL)
-                {
-                    fixedDataSize = 4;
-                }
-
-                if (currentSparseSize + headerSize + fixedDataSize + (remainingInChunk * dataSizePerBlock) <= maxFileSize)
-                {
-                    currentSparseSize += headerSize + fixedDataSize + (remainingInChunk * dataSizePerBlock);
-                    blocksToInclude += remainingInChunk;
-                    currentBlock += remainingInChunk;
-                }
-                else
-                {
-                    if (chunk.Header.ChunkType == SparseFormat.CHUNK_TYPE_RAW)
-                    {
-                        var available = maxFileSize - currentSparseSize - headerSize;
-                        var canTake = (uint)(available / Header.BlockSize);
-                        if (canTake > 0)
-                        {
-                            blocksToInclude += canTake;
-                            currentBlock += canTake;
-                        }
-                    }
-                    break;
-                }
-
-                chunkBaseBlock = chunkEndBlock;
-            }
-
-            if (blocksToInclude == 0)
-            {
-                break;
-            }
-
-            yield return GetExportStream(startBlock, blocksToInclude, includeCrc);
+            yield return new SparseImageStream(file, 0, file.Header.TotalBlocks, includeCrc, false);
         }
     }
 }

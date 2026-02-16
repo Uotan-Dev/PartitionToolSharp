@@ -33,11 +33,16 @@ public class SparseImageStream : Stream
     /// <summary>
     /// 构造映射流
     /// </summary>
-    public SparseImageStream(SparseFile source, uint startBlock, uint blockCount, bool includeCrc = false)
+    /// <param name="source">源 SparseFile</param>
+    /// <param name="startBlock">映射起始块（绝对位置）</param>
+    /// <param name="blockCount">本流包含的有效数据块数</param>
+    /// <param name="includeCrc">是否包含 CRC32 校验块</param>
+    /// <param name="fullRange">是否在 header 中声明全量 TotalBlocks 并使用 skip 补齐起始/尾部（Resparse 用）</param>
+    public SparseImageStream(SparseFile source, uint startBlock, uint blockCount, bool includeCrc = false, bool fullRange = true)
     {
         _blockSize = source.Header.BlockSize;
 
-        MapChunks(source, startBlock, blockCount);
+        MapChunks(source, startBlock, blockCount, fullRange);
 
         long currentByteOffset = 0;
         var totalChunks = (uint)_mappedChunks.Count;
@@ -52,12 +57,12 @@ public class SparseImageStream : Stream
         var header = new SparseHeader
         {
             Magic = SparseFormat.SPARSE_HEADER_MAGIC,
-            MajorVersion = 1,
-            MinorVersion = 0,
+            MajorVersion = source.Header.MajorVersion,
+            MinorVersion = source.Header.MinorVersion,
             FileHeaderSize = SparseFormat.SPARSE_HEADER_SIZE,
             ChunkHeaderSize = SparseFormat.CHUNK_HEADER_SIZE,
             BlockSize = _blockSize,
-            TotalBlocks = blockCount,
+            TotalBlocks = fullRange ? source.Header.TotalBlocks : blockCount,
             TotalChunks = totalChunks,
             ImageChecksum = imageChecksum
         };
@@ -175,27 +180,28 @@ public class SparseImageStream : Stream
 
                 case SparseFormat.CHUNK_TYPE_FILL:
                     var fillValData = BitConverter.GetBytes(chunk.FillValue);
-                    var fillBuf = new byte[Math.Min(buffer.Length, totalBytes)];
-                    for (var i = 0; i < fillBuf.Length; i += 4)
+                    // 填充缓冲区以进行批量 CRC
+                    for (var i = 0; i <= buffer.Length - 4; i += 4)
                     {
-                        Array.Copy(fillValData, 0, fillBuf, i, 4);
+                        Array.Copy(fillValData, 0, buffer, i, 4);
                     }
+
                     long processedFill = 0;
                     while (processedFill < totalBytes)
                     {
-                        var toProcess = (int)Math.Min(fillBuf.Length, totalBytes - processedFill);
-                        checksum = Crc32.Update(checksum, fillBuf, 0, toProcess);
+                        var toProcess = (int)Math.Min(buffer.Length, totalBytes - processedFill);
+                        checksum = Crc32.Update(checksum, buffer, 0, toProcess);
                         processedFill += toProcess;
                     }
                     break;
 
                 case SparseFormat.CHUNK_TYPE_DONT_CARE:
-                    var zeroDontCareBuf = new byte[Math.Min(buffer.Length, totalBytes)];
+                    Array.Clear(buffer, 0, buffer.Length); // 重用并清零缓冲区
                     long processedZero = 0;
                     while (processedZero < totalBytes)
                     {
-                        var toProcess = (int)Math.Min(zeroDontCareBuf.Length, totalBytes - processedZero);
-                        checksum = Crc32.Update(checksum, zeroDontCareBuf, 0, toProcess);
+                        var toProcess = (int)Math.Min(buffer.Length, totalBytes - processedZero);
+                        checksum = Crc32.Update(checksum, buffer, 0, toProcess);
                         processedZero += toProcess;
                     }
                     break;
@@ -206,8 +212,18 @@ public class SparseImageStream : Stream
         return Crc32.Finish(checksum);
     }
 
-    private void MapChunks(SparseFile source, uint startBlock, uint blockCount)
+    private void MapChunks(SparseFile source, uint startBlock, uint blockCount, bool fullRange)
     {
+        if (fullRange && startBlock > 0)
+        {
+            _mappedChunks.Add(new SparseChunk(new ChunkHeader
+            {
+                ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                ChunkSize = startBlock,
+                TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+            }));
+        }
+
         uint currentSrcBlock = 0;
         var endBlock = startBlock + blockCount;
 
@@ -230,6 +246,16 @@ public class SparseImageStream : Stream
             {
                 break;
             }
+        }
+
+        if (fullRange && endBlock < source.Header.TotalBlocks)
+        {
+            _mappedChunks.Add(new SparseChunk(new ChunkHeader
+            {
+                ChunkType = SparseFormat.CHUNK_TYPE_DONT_CARE,
+                ChunkSize = source.Header.TotalBlocks - endBlock,
+                TotalSize = SparseFormat.CHUNK_HEADER_SIZE
+            }));
         }
     }
 
@@ -357,5 +383,7 @@ public class SparseImageStream : Stream
             parent.Read(offset + inOffset, buffer, bufferOffset, (int)Math.Min(count, length - inOffset));
         public void WriteTo(Stream stream) => throw new NotSupportedException();
         public void Dispose() { }
+        public ISparseDataProvider GetSubProvider(long subOffset, long subLength) =>
+            new SubDataProvider(parent, offset + subOffset, subLength);
     }
 }

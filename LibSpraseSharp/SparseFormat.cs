@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+
 namespace LibSparseSharp;
 
 /// <summary>
@@ -14,6 +16,11 @@ public static class SparseFormat
 
     public const ushort SPARSE_HEADER_SIZE = 28;
     public const ushort CHUNK_HEADER_SIZE = 12;
+
+    /// <summary>
+    /// 单个 Chunk 处理的最大数据大小（避免 32-bit TotalSize 溢出，并保持与 libsparse 兼容）
+    /// </summary>
+    public const uint MAX_CHUNK_DATA_SIZE = 64 * 1024 * 1024; // 64MB
 }
 
 /// <summary>
@@ -38,31 +45,32 @@ public struct SparseHeader
             ? throw new ArgumentException("数据长度不足以构建 SparseHeader")
             : new SparseHeader
             {
-                Magic = BitConverter.ToUInt32(data, 0),
-                MajorVersion = BitConverter.ToUInt16(data, 4),
-                MinorVersion = BitConverter.ToUInt16(data, 6),
-                FileHeaderSize = BitConverter.ToUInt16(data, 8),
-                ChunkHeaderSize = BitConverter.ToUInt16(data, 10),
-                BlockSize = BitConverter.ToUInt32(data, 12),
-                TotalBlocks = BitConverter.ToUInt32(data, 16),
-                TotalChunks = BitConverter.ToUInt32(data, 20),
-                ImageChecksum = BitConverter.ToUInt32(data, 24)
+                Magic = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(0)),
+                MajorVersion = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(4)),
+                MinorVersion = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(6)),
+                FileHeaderSize = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(8)),
+                ChunkHeaderSize = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(10)),
+                BlockSize = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(12)),
+                TotalBlocks = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(16)),
+                TotalChunks = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(20)),
+                ImageChecksum = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(24))
             };
     }
 
     public readonly byte[] ToBytes()
     {
         var data = new byte[SparseFormat.SPARSE_HEADER_SIZE];
+        var span = data.AsSpan();
 
-        BitConverter.GetBytes(Magic).CopyTo(data, 0);
-        BitConverter.GetBytes(MajorVersion).CopyTo(data, 4);
-        BitConverter.GetBytes(MinorVersion).CopyTo(data, 6);
-        BitConverter.GetBytes(FileHeaderSize).CopyTo(data, 8);
-        BitConverter.GetBytes(ChunkHeaderSize).CopyTo(data, 10);
-        BitConverter.GetBytes(BlockSize).CopyTo(data, 12);
-        BitConverter.GetBytes(TotalBlocks).CopyTo(data, 16);
-        BitConverter.GetBytes(TotalChunks).CopyTo(data, 20);
-        BitConverter.GetBytes(ImageChecksum).CopyTo(data, 24);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(0), Magic);
+        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(4), MajorVersion);
+        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(6), MinorVersion);
+        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(8), FileHeaderSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(10), ChunkHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(12), BlockSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(16), TotalBlocks);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(20), TotalChunks);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(24), ImageChecksum);
 
         return data;
     }
@@ -93,21 +101,22 @@ public struct ChunkHeader
             ? throw new ArgumentException("数据长度不足以构建 ChunkHeader")
             : new ChunkHeader
             {
-                ChunkType = BitConverter.ToUInt16(data, 0), // 需要为uint16，若为int，则会解析出负数
-                Reserved = BitConverter.ToUInt16(data, 2),
-                ChunkSize = BitConverter.ToUInt32(data, 4),
-                TotalSize = BitConverter.ToUInt32(data, 8)
+                ChunkType = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(0)),
+                Reserved = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(2)),
+                ChunkSize = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4)),
+                TotalSize = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(8))
             };
     }
 
     public readonly byte[] ToBytes()
     {
         var data = new byte[SparseFormat.CHUNK_HEADER_SIZE];
+        var span = data.AsSpan();
 
-        BitConverter.GetBytes(ChunkType).CopyTo(data, 0);
-        BitConverter.GetBytes(Reserved).CopyTo(data, 2);
-        BitConverter.GetBytes(ChunkSize).CopyTo(data, 4);
-        BitConverter.GetBytes(TotalSize).CopyTo(data, 8);
+        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(0), ChunkType);
+        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(2), Reserved);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(4), ChunkSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(8), TotalSize);
 
         return data;
     }
