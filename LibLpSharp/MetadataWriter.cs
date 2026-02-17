@@ -118,6 +118,10 @@ public static class MetadataWriter
     public static bool WriteToImageFile(string path, LpMetadata metadata)
     {
         using var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite);
+        if (metadata.BlockDevices.Count > 0)
+        {
+            stream.SetLength((long)metadata.BlockDevices[0].Size);
+        }
         WriteToImageStream(stream, metadata);
         return true;
     }
@@ -144,9 +148,12 @@ public static class MetadataWriter
             stream.Seek(primaryOffset, SeekOrigin.Begin);
             stream.Write(metadataBlob, 0, metadataBlob.Length);
 
-            var backupOffset = MetadataReader.GetBackupMetadataOffset(metadata.Geometry, i);
-            stream.Seek(backupOffset, SeekOrigin.Begin);
-            stream.Write(metadataBlob, 0, metadataBlob.Length);
+            if (metadata.BlockDevices.Count > 0)
+            {
+                var backupOffset = MetadataReader.GetBackupMetadataOffset(metadata.Geometry, metadata.BlockDevices[0].Size, i);
+                stream.Seek(backupOffset, SeekOrigin.Begin);
+                stream.Write(metadataBlob, 0, metadataBlob.Length);
+            }
         }
     }
 }

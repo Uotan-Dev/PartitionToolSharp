@@ -35,6 +35,9 @@
                     <Button Content="Resize Image" Command="{Binding ResizeImageCommand}" 
                             Classes="Basic"
                             HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+                    <Button Content="Compact" Command="{Binding CompactLayoutCommand}" 
+                            ToolTip.Tip="Remove gaps between partitions"
+                            HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
                     <Separator Classes="Vertical"/>
                     <Button Content="↑" Command="{Binding MovePartitionUpCommand}" ToolTip.Tip="Move Up"
                             HorizontalContentAlignment="Center" VerticalContentAlignment="Center" MinWidth="32"/>
@@ -57,65 +60,85 @@
         </Border>
 
         <Grid Grid.Row="1" ColumnDefinitions="*, 300">
-            <DataGrid Grid.Column="0" Margin="10" 
-                      ItemsSource="{Binding FilteredPartitions}"
-                      SelectedItem="{Binding SelectedPartition}"
-                      AutoGenerateColumns="False" 
-                      CanUserResizeColumns="True"
-                      CanUserSortColumns="False">
-                <DataGrid.ContextMenu>
-                    <ContextMenu>
-                        <MenuItem Header="Add Partition" Command="{Binding AddNewPartitionCommand}"/>
-                        <MenuItem Header="Delete Selected" Command="{Binding DeleteSelectedPartitionCommand}"/>
-                        <Separator/>
-                        <MenuItem Header="Move Up" Command="{Binding MovePartitionUpCommand}"/>
-                        <MenuItem Header="Move Down" Command="{Binding MovePartitionDownCommand}"/>
-                        <Separator/>
-                        <MenuItem Header="Extract to Raw Image..." Command="{Binding ExtractPartitionCommand}"/>
-                        <MenuItem Header="Flash this partition..." Command="{Binding FlashSelectedPartitionCommand}"/>
-                    </ContextMenu>
-                </DataGrid.ContextMenu>
-                <DataGrid.Columns>
-                    <DataGridTemplateColumn Header="Stat" Width="50">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate x:DataType="models:PartitionEntry">
-                                <Panel>
-                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource SemiRed6}">
-                                        <Ellipse.IsVisible>
-                                            <MultiBinding Converter="{x:Static conv:NumericLessThanConverter.Instance}">
-                                                <Binding Path="Size"/>
-                                                <Binding Path="FileSystemSize"/>
-                                            </MultiBinding>
-                                        </Ellipse.IsVisible>
-                                        <ToolTip.Tip>Size too small for data!</ToolTip.Tip>
-                                    </Ellipse>
-                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource SemiGreen6}" 
-                                             IsVisible="{Binding FileSystemSize, Converter={StaticResource BitwiseAndToBoolConverter}, ConverterParameter=18446744073709551615}">
-                                        <ToolTip.Tip>Filesystem detected</ToolTip.Tip>
-                                    </Ellipse>
-                                </Panel>
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
-                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
-                    <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="*"/>
-                    <DataGridTextColumn Header="Size" Binding="{Binding SizeInMiB}" Width="*"/>
-                    <DataGridTemplateColumn Header="Attributes" Width="Auto">
-                        <DataGridTemplateColumn.CellTemplate>
-                            <DataTemplate x:DataType="models:PartitionEntry">
-                                <StackPanel Orientation="Horizontal" Spacing="5">
-                                    <Border Background="{DynamicResource SemiRed2}" IsVisible="{Binding Attributes, Converter={StaticResource BitwiseAndToBoolConverter}, ConverterParameter=1, Mode=OneWay}" Padding="4,1" CornerRadius="4">
-                                        <TextBlock Text="RO" FontSize="10" Foreground="{DynamicResource SemiRed7}"/>
-                                    </Border>
-                                    <Border Background="{DynamicResource SemiBlue2}" IsVisible="{Binding Attributes, Converter={StaticResource BitwiseAndToBoolConverter}, ConverterParameter=2, Mode=OneWay}" Padding="4,1" CornerRadius="4">
-                                        <TextBlock Text="Slot" FontSize="10" Foreground="{DynamicResource SemiBlue7}"/>
-                                    </Border>
-                                </StackPanel>
-                            </DataTemplate>
-                        </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
-                </DataGrid.Columns>
-            </DataGrid>
+            <TabControl Grid.Column="0" Padding="10">
+                <TabItem Header="Partitions">
+                    <DataGrid ItemsSource="{Binding FilteredPartitions}"
+                              SelectedItem="{Binding SelectedPartition}"
+                              AutoGenerateColumns="False" 
+                              CanUserResizeColumns="True"
+                              CanUserSortColumns="False">
+                        <DataGrid.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Add Partition" Command="{Binding AddNewPartitionCommand}"/>
+                                <MenuItem Header="Delete Selected" Command="{Binding DeleteSelectedPartitionCommand}"/>
+                                <Separator/>
+                                <MenuItem Header="Move Up" Command="{Binding MovePartitionUpCommand}"/>
+                                <MenuItem Header="Move Down" Command="{Binding MovePartitionDownCommand}"/>
+                                <Separator/>
+                                <MenuItem Header="Extract to Raw Image..." Command="{Binding ExtractPartitionCommand}"/>
+                                <MenuItem Header="Flash this partition..." Command="{Binding FlashSelectedPartitionCommand}"/>
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="Stat" Width="50">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate x:DataType="models:PartitionEntry">
+                                        <Panel>
+                                            <Ellipse Width="10" Height="10" Fill="{DynamicResource SemiRed6}">
+                                                <Ellipse.IsVisible>
+                                                    <MultiBinding Converter="{x:Static conv:NumericLessThanConverter.Instance}">
+                                                        <Binding Path="Size"/>
+                                                        <Binding Path="FileSystemSize"/>
+                                                    </MultiBinding>
+                                                </Ellipse.IsVisible>
+                                                <ToolTip.Tip>Size too small for data!</ToolTip.Tip>
+                                            </Ellipse>
+                                            <Ellipse Width="10" Height="10" Fill="{DynamicResource SemiGreen6}" 
+                                                     IsVisible="{Binding FileSystemSize, Converter={StaticResource BitwiseAndToBoolConverter}, ConverterParameter=18446744073709551615}">
+                                                <ToolTip.Tip>Filesystem detected</ToolTip.Tip>
+                                            </Ellipse>
+                                        </Panel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*"/>
+                            <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="*"/>
+                            <DataGridTextColumn Header="Size" Binding="{Binding SizeInMiB}" Width="*"/>
+                            <DataGridTemplateColumn Header="Attributes" Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate x:DataType="models:PartitionEntry">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <Border Background="{DynamicResource SemiRed2}" IsVisible="{Binding IsReadOnly, Mode=OneWay}" Padding="4,1" CornerRadius="4">
+                                                <TextBlock Text="RO" FontSize="10" Foreground="{DynamicResource SemiRed7}"/>
+                                            </Border>
+                                            <Border Background="{DynamicResource SemiBlue2}" IsVisible="{Binding IsSlot, Mode=OneWay}" Padding="4,1" CornerRadius="4">
+                                                <TextBlock Text="Slot" FontSize="10" Foreground="{DynamicResource SemiBlue7}"/>
+                                            </Border>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </TabItem>
+                <TabItem Header="Groups">
+                    <Grid RowDefinitions="Auto, *">
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,10">
+                            <Button Content="Add Group" Command="{Binding AddNewGroupCommand}" Classes="Warning"/>
+                            <Button Content="Delete Group" Command="{Binding DeleteSelectedGroupCommand}" Classes="Danger"/>
+                        </StackPanel>
+                        <DataGrid Grid.Row="1" ItemsSource="{Binding Groups}"
+                                  SelectedItem="{Binding SelectedGroup}"
+                                  AutoGenerateColumns="False"
+                                  CanUserResizeColumns="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="Max Size" Binding="{Binding SizeText}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
+            </TabControl>
 
             <ScrollViewer Grid.Column="1" Padding="15" Background="{DynamicResource SemiGrey1}" BorderBrush="{DynamicResource SemiGrey3}" BorderThickness="1,0,0,0">
                 <StackPanel Spacing="20">
@@ -124,11 +147,15 @@
                             <TextBlock Text="Image Properties" FontSize="16" FontWeight="Bold"/>
                             <TextBlock Text="Total Capacity:" FontSize="12"/>
                             <Grid ColumnDefinitions="*, 80">
-                                <NumericUpDown Value="{Binding DisplayImageSize}" Minimum="0"/>
-                                <ComboBox Grid.Column="1" ItemsSource="{Binding SizeUnits}" SelectedItem="{Binding ImageSizeUnit}" Margin="5,0,0,0"/>
+                                <NumericUpDown Value="{Binding DisplayImageSize}" Minimum="0" HorizontalAlignment="Stretch"/>
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding SizeUnits}" SelectedItem="{Binding ImageSizeUnit}" Margin="5,0,0,0" HorizontalAlignment="Stretch"/>
                             </Grid>
-                            <Button Content="Apply Resize" Command="{Binding ResizeImageCommand}" 
-                                    HorizontalAlignment="Stretch" Classes="Primary"/>
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <Button Content="Apply" Command="{Binding ResizeImageCommand}" 
+                                        HorizontalAlignment="Stretch" Classes="Primary" Width="80"/>
+                                <Button Content="Fit" Command="{Binding ShrinkToFitCommand}" 
+                                        HorizontalAlignment="Stretch" Width="60"/>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
@@ -139,7 +166,9 @@
                         <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Watermark="system, vendor, etc."/>
                         
                         <TextBlock Text="Group:"/>
-                        <TextBox Text="{Binding Group}" IsReadOnly="True" Opacity="0.6"/>
+                        <ComboBox ItemsSource="{Binding $parent[UserControl].((vm:PartitionManagerViewModel)DataContext).GroupNames}"
+                                  SelectedItem="{Binding Group}"
+                                  HorizontalAlignment="Stretch"/>
 
                         <TextBlock Text="Size:"/>
                         <Grid ColumnDefinitions="*, 80">
@@ -182,14 +211,35 @@
                         <CheckBox IsChecked="{Binding IsReadOnly, Mode=TwoWay}" Content="Read-Only"/>
                         <CheckBox IsChecked="{Binding IsSlot, Mode=TwoWay}" Content="Slot (A/B)"/>
                     </StackPanel>
+
+                    <!-- Group Properties -->
+                    <StackPanel Spacing="10" DataContext="{Binding SelectedGroup}" x:DataType="models:GroupEntry" IsVisible="{Binding $parent[UserControl].((vm:PartitionManagerViewModel)DataContext).SelectedGroup, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <TextBlock Text="Group Properties" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+                        
+                        <TextBlock Text="Name:"/>
+                        <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Watermark="default, main, etc."/>
+                        
+                        <TextBlock Text="Maximum Size (0 = Unlimited):"/>
+                        <Grid ColumnDefinitions="*, 80">
+                            <NumericUpDown Value="{Binding DisplayMaxSize}" Minimum="0"/>
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding $parent[UserControl].((vm:PartitionManagerViewModel)DataContext).SizeUnits}" SelectedItem="{Binding SelectedSizeUnit}" Margin="5,0,0,0"/>
+                        </Grid>
+                    </StackPanel>
                     
-                    <TextBlock Text="Select a partition to edit its properties." 
+                    <TextBlock Text="Select a partition or group to edit its properties." 
                                Foreground="{DynamicResource SemiGrey6}" 
-                               IsVisible="{Binding SelectedPartition, Converter={x:Static ObjectConverters.IsNull}}"
+                               IsVisible="{Binding !!SelectedPartition, Converter={x:Static ObjectConverters.IsNotNull}, ConverterParameter=False}"
                                FontStyle="Italic"
                                TextWrapping="Wrap"
                                HorizontalAlignment="Center"
-                               Margin="0,20"/>
+                               Margin="0,20">
+                        <TextBlock.IsVisible>
+                            <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                <Binding Path="SelectedPartition" Converter="{x:Static ObjectConverters.IsNull}"/>
+                                <Binding Path="SelectedGroup" Converter="{x:Static ObjectConverters.IsNull}"/>
+                            </MultiBinding>
+                        </TextBlock.IsVisible>
+                    </TextBlock>
                 </StackPanel>
             </ScrollViewer>
         </Grid>

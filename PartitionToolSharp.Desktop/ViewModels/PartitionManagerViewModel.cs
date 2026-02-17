@@ -13,6 +13,7 @@ using LibLpSharp;
 using LibSparseSharp;
 using PartitionToolSharp.Desktop.Models;
 using PartitionToolSharp.Desktop.Services;
+using Ursa.Controls;
 
 namespace PartitionToolSharp.Desktop.ViewModels;
 
@@ -22,12 +23,19 @@ public partial class PartitionManagerViewModel : ObservableObject
     private ObservableCollection<PartitionEntry> _partitions = [];
 
     [ObservableProperty]
+    private ObservableCollection<GroupEntry> _groups = [];
+
+    [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DeleteSelectedPartitionCommand))]
     [NotifyCanExecuteChangedFor(nameof(MovePartitionUpCommand))]
     [NotifyCanExecuteChangedFor(nameof(MovePartitionDownCommand))]
     [NotifyCanExecuteChangedFor(nameof(ExtractPartitionCommand))]
     [NotifyCanExecuteChangedFor(nameof(FlashSelectedPartitionCommand))]
     private PartitionEntry? _selectedPartition;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedGroupCommand))]
+    private GroupEntry? _selectedGroup;
 
     [ObservableProperty]
     private string? _currentFilePath;
@@ -78,6 +86,8 @@ public partial class PartitionManagerViewModel : ObservableObject
                 ? Partitions
                 : Partitions.Where(p => p.Name.Contains(SearchText, StringComparison.OrdinalIgnoreCase)).ToList();
 
+    public IEnumerable<string> GroupNames => Groups.Select(g => g.Name);
+
     partial void OnSearchTextChanged(string value) => OnPropertyChanged(nameof(FilteredPartitions));
 
     private LpMetadata? _metadata;
@@ -107,6 +117,40 @@ public partial class PartitionManagerViewModel : ObservableObject
 
         var builder = MetadataBuilder.FromMetadata(_metadata);
 
+        // 1. 同步分区组
+        var groupsToRemove = builder.Groups
+            .Where(bg => bg.Name != "default" && !Groups.Any(vg => vg.Name == bg.Name))
+            .Select(bg => bg.Name)
+            .ToList();
+        foreach (var gn in groupsToRemove)
+        {
+            builder.RemoveGroup(gn);
+        }
+
+        foreach (var g in Groups)
+        {
+            if (builder.FindGroup(g.Name) == null)
+            {
+                builder.AddGroup(g.Name, g.MaxSize);
+            }
+            else
+            {
+                builder.ResizeGroup(g.Name, g.MaxSize);
+            }
+        }
+
+        // 2. 移除已经在 UI 上删除的分区
+        var uiNamesList = Partitions.Select(p => p.Name).ToList();
+        var partitionsToRemove = builder.Partitions
+            .Where(bp => !uiNamesList.Contains(bp.Name))
+            .Select(bp => bp.Name)
+            .ToList();
+        foreach (var name in partitionsToRemove)
+        {
+            builder.RemovePartition(name);
+        }
+
+        // 3. 更新或添加分区
         foreach (var p in Partitions)
         {
             var builderPart = builder.FindPartition(p.Name);
@@ -119,12 +163,14 @@ public partial class PartitionManagerViewModel : ObservableObject
             if (builderPart != null)
             {
                 builderPart.Attributes = p.Attributes;
+                builderPart.GroupName = p.Group; // 确保组名同步
                 builder.ResizePartition(builderPart, p.Size);
             }
         }
 
-        var uiNames = Partitions.Select(p => p.Name).ToList();
-        builder.ReorderPartitions(uiNames);
+        // 4. 应用重排序
+        builder.ReorderPartitions(uiNamesList);
+
         return builder;
     }
 
@@ -134,6 +180,7 @@ public partial class PartitionManagerViewModel : ObservableObject
 
         var current = SelectedPartition;
         OnPropertyChanged(nameof(FilteredPartitions));
+        OnPropertyChanged(nameof(GroupNames));
 
         if (current != null && SelectedPartition != current)
         {
@@ -190,10 +237,140 @@ public partial class PartitionManagerViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = $"调整失败: {ex.Message}";
-            await Ursa.Controls.MessageBox.ShowOverlayAsync(ex.Message, "调整失败");
+            await MessageBox.ShowOverlayAsync(
+                message: ex.Message,
+                title: "错误",
+                button: MessageBoxButton.OK,
+                icon: MessageBoxIcon.Error);
             // 回滚界面上的 ImageSize
             ImageSize = _metadata.BlockDevices[0].Size;
         }
+    }
+
+    [RelayCommand]
+    private async Task CompactLayoutAsync()
+    {
+        if (_metadata == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var builder = GetUpdatedBuilder();
+            builder.CompactPartitions();
+            _metadata = builder.Export();
+            UpdatePartitionsFromMetadata();
+            StatusMessage = "分区布局已紧凑处理";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Compact failed: {ex.Message}";
+            await MessageBox.ShowOverlayAsync(
+                message: ex.Message,
+                title: "错误",
+                button: MessageBoxButton.OK,
+                icon: MessageBoxIcon.Error);
+        }
+    }
+
+    [RelayCommand]
+    private async Task ShrinkToFit()
+    {
+        if (_metadata == null)
+        {
+            return;
+        }
+
+        var result = await MessageBox.ShowOverlayAsync(
+            message: "该操作将重新排列所有分区以消除空隙（紧凑布局），从而实现最小镜像体积。是否继续？",
+            title: "建议",
+            button: MessageBoxButton.YesNo);
+
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            var builder = GetUpdatedBuilder();
+            builder.CompactPartitions();
+
+            var tempMetadata = builder.Export();
+            var maxSectorUsed = tempMetadata.BlockDevices[0].FirstLogicalSector;
+            foreach (var extent in tempMetadata.Extents)
+            {
+                if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
+                {
+                    maxSectorUsed = Math.Max(maxSectorUsed, extent.TargetData + extent.NumSectors);
+                }
+            }
+
+            var backupSize = (ulong)tempMetadata.Geometry.MetadataMaxSize * tempMetadata.Geometry.MetadataSlotCount;
+            var minSize = (maxSectorUsed * MetadataFormat.LP_SECTOR_SIZE) + backupSize;
+
+            var alignment = _metadata.BlockDevices[0].Alignment;
+            if (alignment == 0)
+            {
+                alignment = 4096;
+            }
+
+            minSize = (minSize + alignment - 1) / alignment * alignment;
+
+            ImageSize = minSize;
+
+            // 重要：因为我们紧凑了布局，必须应用这个变更，否则后续保存会因为 Offset 超界失败
+            _metadata = tempMetadata;
+            // 同步回 UI
+            UpdatePartitionsFromMetadata();
+
+            StatusMessage = $"建议大小已应用并已完成分区紧凑: {ImageSize / (1024 * 1024.0):F2} MiB";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"计算失败: {ex.Message}";
+            await MessageBox.ShowOverlayAsync(
+                message: $"计算失败: {ex.Message}",
+                title: "错误",
+                button: MessageBoxButton.OK,
+                icon: MessageBoxIcon.Error);
+        }
+    }
+
+    private void UpdatePartitionsFromMetadata()
+    {
+        if (_metadata == null)
+        {
+            return;
+        }
+
+        Partitions.Clear();
+        foreach (var part in _metadata.Partitions)
+        {
+            var groupName = "default";
+            if (part.GroupIndex < _metadata.Groups.Count)
+            {
+                groupName = _metadata.Groups[(int)part.GroupIndex].GetName();
+            }
+
+            ulong totalSize = 0;
+            for (uint i = 0; i < part.NumExtents; i++)
+            {
+                totalSize += _metadata.Extents[(int)(part.FirstExtentIndex + i)].NumSectors * 512;
+            }
+
+            var entry = new PartitionEntry
+            {
+                Name = part.GetName(),
+                Group = groupName,
+                Size = totalSize,
+                Attributes = part.Attributes,
+                OnChanged = OnMetadataChanged
+            };
+            Partitions.Add(entry);
+        }
+        OnMetadataChanged();
     }
 
     [RelayCommand(CanExecute = nameof(HasSelection))]
@@ -221,6 +398,45 @@ public partial class PartitionManagerViewModel : ObservableObject
         SelectedPartition = null;
         OnMetadataChanged();
         StatusMessage = "Partition removed and marked for data wiping on save";
+    }
+
+    [RelayCommand]
+    private void AddNewGroup()
+    {
+        var newName = "new_group_" + (Groups.Count + 1);
+        var entry = new GroupEntry
+        {
+            Name = newName,
+            MaxSize = 0,
+            OnChanged = OnMetadataChanged
+        };
+        Groups.Add(entry);
+        SelectedGroup = entry;
+        StatusMessage = $"已添加新分区组: {newName}";
+        OnMetadataChanged();
+    }
+
+    [RelayCommand]
+    private void DeleteSelectedGroup()
+    {
+        if (SelectedGroup != null)
+        {
+            if (SelectedGroup.Name == "default")
+            {
+                StatusMessage = "无法删除 'default' 分区组";
+                return;
+            }
+
+            if (Partitions.Any(p => p.Group == SelectedGroup.Name))
+            {
+                StatusMessage = "分区组正在被使用，无法删除";
+                return;
+            }
+
+            Groups.Remove(SelectedGroup);
+            StatusMessage = "分区组已删除";
+            OnMetadataChanged();
+        }
     }
 
     private bool HasSelection => SelectedPartition != null;
@@ -396,11 +612,16 @@ public partial class PartitionManagerViewModel : ObservableObject
                 }
             });
             StatusMessage = "Extraction successful";
-            await Ursa.Controls.MessageBox.ShowOverlayAsync("提取成功！", "提示");
+            await MessageBox.ShowOverlayAsync("提取成功！", "提示");
         }
         catch (Exception ex)
         {
             StatusMessage = $"Extraction failed: {ex.Message}";
+            await MessageBox.ShowOverlayAsync(
+                message: $"提取失败: {ex.Message}",
+                title: "错误",
+                button: MessageBoxButton.OK,
+                icon: MessageBoxIcon.Error);
         }
     }
 
@@ -417,72 +638,131 @@ public partial class PartitionManagerViewModel : ObservableObject
             StatusMessage = "Saving changes...";
 
             var builder = GetUpdatedBuilder();
+            builder.ResizeBlockDevice(ImageSize);
             var newMetadata = builder.Export();
 
+            var magicBuf = new byte[4];
+            var isSparse = false;
             using (var fs = File.OpenRead(CurrentFilePath))
             {
-                var magicBuf = new byte[4];
-                fs.ReadExactly(magicBuf, 0, 4);
-                if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SparseHeaderMagic)
+                if (fs.Read(magicBuf, 0, 4) == 4)
                 {
-                    await Ursa.Controls.MessageBox.ShowOverlayAsync("当前版本不支持直接写回 Sparse 镜像，请先转换为 Raw 格式。", "不支持的操作");
-                    return;
+                    if (BitConverter.ToUInt32(magicBuf, 0) == SparseFormat.SparseHeaderMagic)
+                    {
+                        isSparse = true;
+                    }
                 }
             }
 
-            using (var fs = new FileStream(CurrentFilePath, FileMode.Open, FileAccess.ReadWrite))
+            if (isSparse)
             {
-                var geometryData = MetadataWriter.SerializeGeometry(newMetadata.Geometry);
-                var metadataData = MetadataWriter.SerializeMetadata(newMetadata);
-
-                fs.Seek(MetadataFormat.LP_PARTITION_RESERVED_BYTES, SeekOrigin.Begin);
-                fs.Write(geometryData);
-                fs.Write(geometryData);
-
-                var slotOffset = MetadataFormat.LP_PARTITION_RESERVED_BYTES + (MetadataFormat.LP_METADATA_GEOMETRY_SIZE * 2);
-                fs.Seek(slotOffset, SeekOrigin.Begin);
-
-                for (var i = 0; i < newMetadata.Geometry.MetadataSlotCount; i++)
-                {
-                    var paddedMetadata = new byte[newMetadata.Geometry.MetadataMaxSize];
-                    Array.Copy(metadataData, paddedMetadata, Math.Min(metadataData.Length, paddedMetadata.Length));
-                    fs.Write(paddedMetadata);
-                }
-
-                // 物理调整整个镜像文件的大小 (Realize physical file resize)
-                fs.SetLength((long)newMetadata.BlockDevices[0].Size);
-
-                // 擦除已删除分区的数据 (Wipe removed partition data)
-                if (_extentsToWipe.Count > 0)
-                {
-                    StatusMessage = "Wiping deleted partition data...";
-                    var zeroBuf = new byte[1024 * 1024];
-                    foreach (var extent in _extentsToWipe)
-                    {
-                        fs.Seek((long)extent.TargetData * 512, SeekOrigin.Begin);
-                        var remaining = (long)extent.NumSectors * 512;
-                        while (remaining > 0)
-                        {
-                            var toWrite = (int)Math.Min(zeroBuf.Length, remaining);
-                            fs.Write(zeroBuf, 0, toWrite);
-                            remaining -= toWrite;
-                        }
-                    }
-                    _extentsToWipe.Clear();
-                }
+                await SaveSparseChangesInternalAsync(newMetadata);
+            }
+            else
+            {
+                await SaveRawChangesInternalAsync(newMetadata);
             }
 
             _metadata = newMetadata;
-            StatusMessage = "Changes saved successfully to raw image.";
-            await Ursa.Controls.MessageBox.ShowOverlayAsync("保存成功！", "提示");
+            _extentsToWipe.Clear();
+            StatusMessage = "Changes saved successfully.";
+            await MessageBox.ShowOverlayAsync("保存成功！", "提示");
 
             await RefreshProbeAsync();
         }
         catch (Exception ex)
         {
             StatusMessage = $"Save Error: {ex.Message}";
-            await Ursa.Controls.MessageBox.ShowOverlayAsync($"保存失败: {ex.Message}", "错误");
+            await MessageBox.ShowOverlayAsync(
+                message: $"保存失败: {ex.Message}",
+                title: "错误",
+                button: MessageBoxButton.OK,
+                icon: MessageBoxIcon.Error);
         }
+    }
+
+    private async Task SaveRawChangesInternalAsync(LpMetadata newMetadata)
+    {
+        await Task.Run(() =>
+        {
+            MetadataWriter.WriteToImageFile(CurrentFilePath!, newMetadata);
+
+            if (_extentsToWipe.Count > 0)
+            {
+                using var fs = new FileStream(CurrentFilePath!, FileMode.Open, FileAccess.Write);
+                Dispatcher.UIThread.Post(() => StatusMessage = "Wiping deleted partition data...");
+                var zeroBuf = new byte[1024 * 1024];
+                foreach (var extent in _extentsToWipe)
+                {
+                    fs.Seek((long)extent.TargetData * 512, SeekOrigin.Begin);
+                    var remaining = (long)extent.NumSectors * 512;
+                    while (remaining > 0)
+                    {
+                        var toWrite = (int)Math.Min(zeroBuf.Length, remaining);
+                        fs.Write(zeroBuf, 0, toWrite);
+                        remaining -= toWrite;
+                    }
+                }
+            }
+        });
+    }
+
+    private async Task SaveSparseChangesInternalAsync(LpMetadata newMetadata)
+    {
+        var tempFile = CurrentFilePath + ".tmp";
+        await Task.Run(() =>
+        {
+            using var sourceFs = File.OpenRead(CurrentFilePath!);
+            using var sourceSparse = SparseFile.FromStream(sourceFs);
+            using var sourceStream = new SparseStream(sourceSparse);
+
+            var superBuilder = new SuperImageBuilder(newMetadata.BlockDevices[0].Size,
+                                                     newMetadata.Geometry.MetadataMaxSize,
+                                                     newMetadata.Geometry.MetadataSlotCount);
+
+            foreach (var group in newMetadata.Groups)
+            {
+                superBuilder.AddGroup(group.GetName(), group.MaximumSize);
+            }
+
+            foreach (var part in newMetadata.Partitions)
+            {
+                var name = part.GetName();
+                ulong size = 0;
+                for (uint i = 0; i < part.NumExtents; i++)
+                {
+                    size += newMetadata.Extents[(int)(part.FirstExtentIndex + i)].NumSectors * 512;
+                }
+
+                // Find old data
+                var oldPart = _metadata!.Partitions.FirstOrDefault(p => p.GetName() == name);
+                if (oldPart.NumExtents > 0)
+                {
+                    // Copy data from old first extent (simplification, but usually partitions are contiguous)
+                    var oldExtent = _metadata.Extents[(int)oldPart.FirstExtentIndex];
+                    if (oldExtent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
+                    {
+                        superBuilder.AddPartition(name, size, "default", part.Attributes, sourceStream, (long)oldExtent.TargetData * 512);
+                    }
+                    else
+                    {
+                        superBuilder.AddPartition(name, size, "default", part.Attributes);
+                    }
+                }
+                else
+                {
+                    superBuilder.AddPartition(name, size, "default", part.Attributes);
+                }
+            }
+
+            using var newSparseFile = superBuilder.Build();
+            using var outFs = File.Create(tempFile);
+            newSparseFile.WriteToStream(outFs);
+        });
+
+        // Swap files
+        File.Delete(CurrentFilePath!);
+        File.Move(tempFile, CurrentFilePath!);
     }
 
     [RelayCommand]
@@ -570,39 +850,32 @@ public partial class PartitionManagerViewModel : ObservableObject
             if (_metadata == null)
             {
                 StatusMessage = "加载失败: 无法解析元数据";
-                await Ursa.Controls.MessageBox.ShowOverlayAsync("加载失败: 无法解析元数据 (Metadata 为空)", "错误");
+                await MessageBox.ShowOverlayAsync(
+                    message: "加载失败: 无法解析元数据 (Metadata 为空)",
+                    title: "错误",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxIcon.Error);
                 RefreshCommandStates();
                 return;
             }
 
             Dispatcher.UIThread.Post(() =>
             {
-                Partitions.Clear();
-                foreach (var part in _metadata.Partitions)
+                Groups.Clear();
+                foreach (var group in _metadata.Groups)
                 {
-                    var groupName = "default";
-                    if (part.GroupIndex < _metadata.Groups.Count)
+                    var entry = new GroupEntry
                     {
-                        groupName = _metadata.Groups[(int)part.GroupIndex].GetName();
-                    }
-
-                    ulong totalSize = 0;
-                    for (uint i = 0; i < part.NumExtents; i++)
-                    {
-                        totalSize += _metadata.Extents[(int)(part.FirstExtentIndex + i)].NumSectors * 512;
-                    }
-
-                    var entry = new PartitionEntry
-                    {
-                        Name = part.GetName(),
-                        Group = groupName,
-                        Size = totalSize,
-                        Attributes = part.Attributes,
+                        Name = group.GetName(),
+                        MaxSize = group.MaximumSize,
                         OnChanged = OnMetadataChanged
                     };
-                    Partitions.Add(entry);
+                    Groups.Add(entry);
                 }
-                OnMetadataChanged();
+
+                UpdatePartitionsFromMetadata();
+
+                ImageSize = _metadata.BlockDevices[0].Size;
                 StatusMessage = $"已加载 {Partitions.Count} 个分区条目";
 
                 _ = ProbeFileSystemSizesAsync(path);
@@ -612,6 +885,11 @@ public partial class PartitionManagerViewModel : ObservableObject
         {
             StatusMessage = $"错误: {ex.Message}";
             RefreshCommandStates();
+            await MessageBox.ShowOverlayAsync(
+                message: $"加载失败: {ex.Message}",
+                title: "错误",
+                button: MessageBoxButton.OK,
+                icon: MessageBoxIcon.Error);
         }
     }
 
@@ -619,6 +897,10 @@ public partial class PartitionManagerViewModel : ObservableObject
     {
         try
         {
+            // 捕获当前的元数据引用，防止探测过程中被替换导致索引越界
+            var currentMetadata = _metadata;
+            if (currentMetadata == null) return;
+
             await Task.Run(() =>
             {
                 using var fs = File.OpenRead(path);
@@ -643,20 +925,25 @@ public partial class PartitionManagerViewModel : ObservableObject
                 {
                     foreach (var entry in Partitions.ToList())
                     {
-                        var lpPart = _metadata?.Partitions.FirstOrDefault(p => p.GetName() == entry.Name);
-                        if (lpPart != null && lpPart.Value.NumExtents > 0)
+                        var lpPart = currentMetadata.Partitions.FirstOrDefault(p => p.GetName() == entry.Name);
+                        // LpMetadataPartition 是结构体，找不到会返回 default (NumExtents = 0)
+                        if (lpPart.NumExtents > 0)
                         {
-                            var extent = _metadata!.Extents[(int)lpPart.Value.FirstExtentIndex];
-                            if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
+                            var extentIdx = (int)lpPart.FirstExtentIndex;
+                            if (extentIdx >= 0 && extentIdx < currentMetadata.Extents.Count)
                             {
-                                var offset = extent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
-                                var fsInfo = Utility.DetectFilesystem(targetStream!, offset);
-
-                                Dispatcher.UIThread.Post(() =>
+                                var extent = currentMetadata.Extents[extentIdx];
+                                if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
                                 {
-                                    entry.FileSystemSize = fsInfo.Size;
-                                    entry.FileSystemType = fsInfo.Type;
-                                });
+                                    var offset = extent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
+                                    var fsInfo = Utility.DetectFilesystem(targetStream!, offset);
+
+                                    Dispatcher.UIThread.Post(() =>
+                                    {
+                                        entry.FileSystemSize = fsInfo.Size;
+                                        entry.FileSystemType = fsInfo.Type;
+                                    });
+                                }
                             }
                         }
                     }
@@ -746,7 +1033,11 @@ public partial class PartitionManagerViewModel : ObservableObject
             catch (Exception ex)
             {
                 StatusMessage = $"准备刷入失败: {ex.Message}";
-                await Ursa.Controls.MessageBox.ShowOverlayAsync($"准备刷入失败: {ex.Message}", "错误");
+                await MessageBox.ShowOverlayAsync(
+                    message: $"准备刷入失败: {ex.Message}",
+                    title: "错误",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxIcon.Error);
             }
         }
         else

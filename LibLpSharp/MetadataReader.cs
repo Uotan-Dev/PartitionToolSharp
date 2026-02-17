@@ -207,10 +207,10 @@ public static class MetadataReader
 
     public static long GetPrimaryMetadataOffset(LpMetadataGeometry geometry, uint slotNumber) => MetadataFormat.LP_PARTITION_RESERVED_BYTES + (MetadataFormat.LP_METADATA_GEOMETRY_SIZE * 2) + ((long)slotNumber * geometry.MetadataMaxSize);
 
-    public static long GetBackupMetadataOffset(LpMetadataGeometry geometry, uint slotNumber)
+    public static long GetBackupMetadataOffset(LpMetadataGeometry geometry, ulong deviceSize, uint slotNumber)
     {
-        var start = MetadataFormat.LP_PARTITION_RESERVED_BYTES + (MetadataFormat.LP_METADATA_GEOMETRY_SIZE * 2) + ((long)geometry.MetadataMaxSize * geometry.MetadataSlotCount);
-        return start + ((long)slotNumber * geometry.MetadataMaxSize);
+        var backupSize = (long)geometry.MetadataMaxSize * geometry.MetadataSlotCount;
+        return (long)deviceSize - backupSize + ((long)slotNumber * geometry.MetadataMaxSize);
     }
 
     private static void ParseTable<T>(byte[] buffer, LpMetadataTableDescriptor desc, List<T> list) where T : unmanaged

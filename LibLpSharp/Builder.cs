@@ -34,6 +34,9 @@ public class MetadataBuilder
     private List<PartitionGroup> _groups = [];
     private List<LpMetadataBlockDevice> _blockDevices = [];
 
+    public IReadOnlyList<PartitionGroup> Groups => _groups;
+    public IReadOnlyList<Partition> Partitions => _partitions;
+
     public MetadataBuilder()
     {
         _groups.Add(new PartitionGroup("default", 0));
@@ -147,7 +150,40 @@ public class MetadataBuilder
         _groups.Add(new PartitionGroup(name, maxSize));
     }
 
+    public void RemoveGroup(string name)
+    {
+        if (name == "default")
+        {
+            throw new InvalidOperationException("不能删除 'default' 分区组");
+        }
+
+        var group = _groups.Find(g => g.Name == name);
+        if (group != null)
+        {
+            if (_partitions.Any(p => p.GroupName == name))
+            {
+                throw new InvalidOperationException($"分区组 '{name}' 正在被使用，无法删除");
+            }
+            _groups.Remove(group);
+        }
+    }
+
+    public void ResizeGroup(string name, ulong newMaxSize)
+    {
+        var group = _groups.Find(g => g.Name == name) ?? throw new ArgumentException($"分区组 '{name}' 不存在");
+        if (newMaxSize > 0)
+        {
+            var currentUsage = _partitions.Where(p => p.GroupName == name).Sum(p => (long)p.Size);
+            if ((ulong)currentUsage > newMaxSize)
+            {
+                throw new InvalidOperationException($"新容量限制 ({newMaxSize / (1024 * 1024.0):F2} MiB) 小于当前组内分区占用的总空间 ({(ulong)currentUsage / (1024 * 1024.0):F2} MiB)");
+            }
+        }
+        group.MaximumSize = newMaxSize;
+    }
+
     public Partition? FindPartition(string name) => _partitions.FirstOrDefault(p => p.Name == name);
+    public PartitionGroup? FindGroup(string name) => _groups.FirstOrDefault(g => g.Name == name);
 
     public void ResizeBlockDevice(ulong newSize)
     {
@@ -298,7 +334,10 @@ public class MetadataBuilder
     {
         var regions = new List<FreeRegion>();
         var firstSector = _blockDevices[0].FirstLogicalSector;
-        var lastSector = _blockDevices[0].Size / MetadataFormat.LP_SECTOR_SIZE;
+
+        // 预留末尾的备份元数据空间
+        var backupSize = (ulong)_geometry.MetadataMaxSize * _geometry.MetadataSlotCount;
+        var lastSector = (_blockDevices[0].Size - backupSize) / MetadataFormat.LP_SECTOR_SIZE;
 
         var extents = _partitions.SelectMany(p => p.Extents)
             .Where(e => e.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
@@ -321,6 +360,46 @@ public class MetadataBuilder
         }
 
         return regions;
+    }
+
+    /// <summary>
+    /// 紧凑分区布局，消除分区之间的空隙
+    /// </summary>
+    public void CompactPartitions()
+    {
+        var currentSector = _blockDevices[0].FirstLogicalSector;
+        var alignmentSectors = _blockDevices[0].Alignment / MetadataFormat.LP_SECTOR_SIZE;
+        var alignmentOffsetSectors = _blockDevices[0].AlignmentOffset / MetadataFormat.LP_SECTOR_SIZE;
+
+        foreach (var partition in _partitions)
+        {
+            if (partition.Size == 0)
+            {
+                continue;
+            }
+
+            // 对齐当前其实位置
+            if (alignmentSectors > 0)
+            {
+                var remainder = (currentSector - alignmentOffsetSectors) % alignmentSectors;
+                if (remainder > 0)
+                {
+                    currentSector += alignmentSectors - remainder;
+                }
+            }
+
+            var totalSectors = partition.Size / MetadataFormat.LP_SECTOR_SIZE;
+            partition.Extents.Clear();
+            partition.AddExtent(new LpMetadataExtent
+            {
+                NumSectors = totalSectors,
+                TargetType = MetadataFormat.LP_TARGET_TYPE_LINEAR,
+                TargetData = currentSector,
+                TargetSource = 0
+            });
+
+            currentSector += totalSectors;
+        }
     }
 
     public LpMetadata Export()

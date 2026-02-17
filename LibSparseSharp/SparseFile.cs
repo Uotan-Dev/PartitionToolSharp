@@ -263,6 +263,12 @@ public class SparseFile : IDisposable
             : sparseFile;
     }
 
+    public void Resize(long newSize)
+    {
+        var newTotalBlocks = (uint)((newSize + Header.BlockSize - 1) / Header.BlockSize);
+        Header = Header with { TotalBlocks = newTotalBlocks };
+    }
+
     /// <summary>
     /// Writes the sparse file to stream (aligned with libsparse's sparse_file_write)
     /// </summary>

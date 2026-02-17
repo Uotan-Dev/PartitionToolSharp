@@ -6,6 +6,7 @@ public class SuperImageBuilder(ulong deviceSize, uint metadataMaxSize, uint meta
 {
     private readonly MetadataBuilder _builder = MetadataBuilder.New(deviceSize, metadataMaxSize, metadataSlotCount);
     private readonly Dictionary<string, string> _partitionImages = [];
+    private readonly Dictionary<string, (Stream Stream, long Offset)> _partitionStreams = [];
     private readonly uint _blockSize = blockSize;
 
     public void AddPartition(string name, ulong size, string groupName, uint attributes, string? imagePath = null)
@@ -21,6 +22,17 @@ public class SuperImageBuilder(ulong deviceSize, uint metadataMaxSize, uint meta
         {
             _partitionImages[name] = imagePath;
         }
+    }
+
+    public void AddPartition(string name, ulong size, string groupName, uint attributes, Stream stream, long offset)
+    {
+        _builder.AddPartition(name, groupName, attributes);
+        var partition = _builder.FindPartition(name);
+        if (partition != null)
+        {
+            _builder.ResizePartition(partition, size);
+        }
+        _partitionStreams[name] = (stream, offset);
     }
 
     public void AddGroup(string name, ulong maxSize) => _builder.AddGroup(name, maxSize);
@@ -112,6 +124,21 @@ public class SuperImageBuilder(ulong deviceSize, uint metadataMaxSize, uint meta
                 {
                     sparseFile.AddFillChunk(0, (uint)extentSize);
                 }
+            }
+            else if (_partitionStreams.TryGetValue(partitionName, out var streamInfo))
+            {
+                long offsetInPartition = 0;
+                for (var j = 0; j < i; j++)
+                {
+                    var (pName, pExtent) = sortedExtents[j];
+                    if (pName == partitionName)
+                    {
+                        offsetInPartition += (long)pExtent.NumSectors * MetadataFormat.LP_SECTOR_SIZE;
+                    }
+                }
+
+                var availableSize = (long)extent.NumSectors * MetadataFormat.LP_SECTOR_SIZE;
+                sparseFile.AddStreamChunk(streamInfo.Stream, streamInfo.Offset + offsetInPartition, (uint)availableSize);
             }
             else
             {
