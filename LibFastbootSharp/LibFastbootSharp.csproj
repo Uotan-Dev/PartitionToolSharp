@@ -10,4 +10,8 @@
     <PackageReference Include="LibUsbDotNet" Version="2.2.29" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\LibSparseSharp\LibSparseSharp.csproj" />
+  </ItemGroup>
+
 </Project>

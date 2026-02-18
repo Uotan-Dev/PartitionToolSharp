@@ -899,7 +899,10 @@ public partial class PartitionManagerViewModel : ObservableObject
         {
             // 捕获当前的元数据引用，防止探测过程中被替换导致索引越界
             var currentMetadata = _metadata;
-            if (currentMetadata == null) return;
+            if (currentMetadata == null)
+            {
+                return;
+            }
 
             await Task.Run(() =>
             {
@@ -936,7 +939,7 @@ public partial class PartitionManagerViewModel : ObservableObject
                                 if (extent.TargetType == MetadataFormat.LP_TARGET_TYPE_LINEAR)
                                 {
                                     var offset = extent.TargetData * MetadataFormat.LP_SECTOR_SIZE;
-                                    var fsInfo = Utility.DetectFilesystem(targetStream!, offset);
+                                    var fsInfo = Utility.DetectFilesystem(targetStream, offset);
 
                                     Dispatcher.UIThread.Post(() =>
                                     {

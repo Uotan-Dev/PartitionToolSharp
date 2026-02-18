@@ -66,12 +66,9 @@ public struct LpMetadataGeometry
 
     public static LpMetadataGeometry FromBytes(ReadOnlySpan<byte> data)
     {
-        if (data.Length < System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataGeometry>())
-        {
-            throw new ArgumentException("Data too small for LpMetadataGeometry");
-        }
-
-        return MemoryMarshal.Read<LpMetadataGeometry>(data);
+        return data.Length < System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataGeometry>()
+            ? throw new ArgumentException("Data too small for LpMetadataGeometry")
+            : MemoryMarshal.Read<LpMetadataGeometry>(data);
     }
 }
 
@@ -104,12 +101,9 @@ public struct LpMetadataHeader
 
     public static LpMetadataHeader FromBytes(ReadOnlySpan<byte> data)
     {
-        if (data.Length < System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataHeader>())
-        {
-            throw new ArgumentException("Data too small for LpMetadataHeader");
-        }
-
-        return MemoryMarshal.Read<LpMetadataHeader>(data);
+        return data.Length < System.Runtime.CompilerServices.Unsafe.SizeOf<LpMetadataHeader>()
+            ? throw new ArgumentException("Data too small for LpMetadataHeader")
+            : MemoryMarshal.Read<LpMetadataHeader>(data);
     }
 }
 

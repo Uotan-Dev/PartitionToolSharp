@@ -617,6 +617,13 @@ public class SparseFile : IDisposable
                 throw new ArgumentException($"Block region [{start}, {start + sizeInBlocks}) overlaps with existing chunk [{chunk.StartBlock}, {chunk.StartBlock + chunk.Header.ChunkSize}).");
             }
         }
+
+        if (blockIndex.HasValue && blockIndex.Value > CurrentBlock)
+        {
+            var gapSizeBlocks = blockIndex.Value - CurrentBlock;
+            AddDontCareChunk((long)gapSizeBlocks * Header.BlockSize, CurrentBlock);
+        }
+
         return start;
     }
 
