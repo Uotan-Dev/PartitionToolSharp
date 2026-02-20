@@ -878,6 +878,8 @@ public partial class PartitionManagerViewModel : ObservableObject
                 ImageSize = _metadata.BlockDevices[0].Size;
                 StatusMessage = $"已加载 {Partitions.Count} 个分区条目";
 
+                OnMetadataChanged();
+
                 _ = ProbeFileSystemSizesAsync(path);
             });
         }
